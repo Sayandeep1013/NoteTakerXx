@@ -339,9 +339,9 @@ export default function Note({ note, gridUnit: G }: Props) {
                 if (e.key === "Tab") { e.preventDefault(); setEditFocus("body"); bodyRef.current?.focus(); }
                 if (e.key === "Escape") exitEdit();
               }}
-              style={{ background: "transparent", border: "none", outline: "none", fontWeight: 700, fontSize: 14, color: textColor, letterSpacing: "-0.01em", fontFamily: "inherit", width: "100%", padding: 0, marginBottom: 5, cursor: "text" }}
+              style={{ background: "transparent", border: "none", outline: "none", fontWeight: 800, fontSize: 16, color: textColor, fontFamily: "inherit", width: "100%", padding: 0, marginBottom: 6, cursor: "text" }}
             />
-            <div style={{ width: "100%", height: 1, background: `${textColor}22`, marginBottom: 6, flexShrink: 0 }} />
+            <div style={{ width: "100%", height: 1.5, background: `${textColor}36`, marginBottom: 8, flexShrink: 0 }} />
             <textarea
               ref={bodyRef}
               value={editBody}
@@ -364,11 +364,12 @@ export default function Note({ note, gridUnit: G }: Props) {
         ) : (
           <div style={{ height: visualH - 34, display: "flex", flexDirection: "column", overflow: "hidden" }}>
             {/* Title */}
-            <div className="note-title-clickable" onClick={() => enterEdit("title")} style={{ padding: "7px 11px 3px", fontWeight: 700, fontSize: 14, color: textColor, letterSpacing: "-0.01em", flexShrink: 0, cursor: "text" }}>
+            <div className="note-title-clickable" onClick={() => enterEdit("title")} style={{ padding: "8px 11px 5px", fontWeight: 800, fontSize: 16, color: textColor, flexShrink: 0, cursor: "text" }}>
               <div style={{ overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
                 {note.title || <span style={{ color: phColor, fontWeight: 500 }}>Title</span>}
               </div>
             </div>
+            <div style={{ width: "calc(100% - 22px)", height: 1.5, background: `${textColor}36`, margin: "0 11px 5px", flexShrink: 0 }} />
             {/* Body — rich text view */}
             <div
               className="note-body-clickable"
