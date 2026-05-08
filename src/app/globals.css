@@ -1,0 +1,75 @@
+@import "tailwindcss";
+
+/* Base CSS vars — overridden at runtime by ThemeSync */
+:root {
+  --bg-canvas:      #f0ede8;
+  --bg-sidebar:     rgba(255,252,248,0.75);
+  --sidebar-border: rgba(0,0,0,0.14);
+  --text-ui:        #1a1a1a;
+  --text-muted:     rgba(26,26,26,0.42);
+  --accent:         #5c6bc0;
+  --btn-hover:      rgba(0,0,0,0.055);
+}
+
+* { box-sizing: border-box; }
+
+/* Native OS cursors — semantic types for each context */
+
+html, body {
+  margin: 0; padding: 0;
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: var(--bg-canvas);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  color: var(--text-ui);
+  transition: background 300ms ease, color 200ms ease;
+}
+
+.canvas-surface {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.canvas-world {
+  position: absolute;
+  width: 16000px; height: 16000px;
+  top: 0; left: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+
+.note-drag-handle         { cursor: grab; }
+.note-drag-handle:active  { cursor: grabbing; }
+.note-body-clickable      { cursor: text; }
+.note-title-clickable     { cursor: text; }
+
+/* Badge placement mode — highlighted notes */
+.badge-mode-active {
+  outline: 2px dashed var(--accent) !important;
+  outline-offset: 3px;
+}
+
+/* Connection mode */
+.connection-source-active {
+  outline: 2.5px solid #e74c3c !important;
+  outline-offset: 4px;
+}
+
+/* + button pulse */
+@keyframes pulse-ring {
+  0%   { transform: scale(1); opacity: 0.5; }
+  70%  { transform: scale(1.5); opacity: 0; }
+  100% { transform: scale(1.5); opacity: 0; }
+}
+
+/* Resize handles */
+.resize-handle { position: absolute; z-index: 10; }
+.resize-nw { top:-4px; left:-4px; width:10px; height:10px; cursor:nw-resize; }
+.resize-n  { top:-4px; left:50%; transform:translateX(-50%); width:10px; height:10px; cursor:n-resize; }
+.resize-ne { top:-4px; right:-4px; width:10px; height:10px; cursor:ne-resize; }
+.resize-e  { top:50%; right:-4px; transform:translateY(-50%); width:10px; height:10px; cursor:e-resize; }
+.resize-se { bottom:-4px; right:-4px; width:10px; height:10px; cursor:se-resize; }
+.resize-s  { bottom:-4px; left:50%; transform:translateX(-50%); width:10px; height:10px; cursor:s-resize; }
+.resize-sw { bottom:-4px; left:-4px; width:10px; height:10px; cursor:sw-resize; }
+.resize-w  { top:50%; left:-4px; transform:translateY(-50%); width:10px; height:10px; cursor:w-resize; }
