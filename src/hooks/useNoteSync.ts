@@ -79,11 +79,12 @@ async function resilientUpsert(
 
 // ── Main hook ──────────────────────────────────────────────────────
 
-export function useNoteSync(user: User | null) {
+export function useNoteSync(user: User | null, authLoading = false) {
   const { notes } = useNotesStore();
   const [showMergePrompt, setShowMergePrompt] = useState(false);
   const [cachedCount, setCachedCount]         = useState(0);
   const [dbError, setDbError]                 = useState<string | null>(null);
+  const [syncReady, setSyncReady]             = useState(false);
   const supabase = createClient();
 
   const prevNotes  = useRef<Note[]>([]);
@@ -92,9 +93,11 @@ export function useNoteSync(user: User | null) {
 
   // ── Load: fires when the logged-in user changes ───────────────────
   useEffect(() => {
+    if (authLoading) return;
     const uid = user?.id ?? null;
     if (loadedFor.current === uid) return;
     loadedFor.current = uid;
+    setSyncReady(false);
     setDbError(null);
 
     if (user) {
@@ -119,12 +122,13 @@ export function useNoteSync(user: User | null) {
         .then((res) => {
           if (!res) return;
           const { data, error } = res;
-          if (error) { setDbError(`Load error: ${error.message}`); return; }
+          if (error) { setDbError(`Load error: ${error.message}`); setSyncReady(true); return; }
           if (data) {
             const rows = data.map(fromRow);
             useNotesStore.setState({ notes: rows, topZ: Math.max(...rows.map((n) => n.zIndex), 10) });
             prevNotes.current = rows;
           }
+          setSyncReady(true);
           // Check for cached guest notes
           try {
             const raw = localStorage.getItem(CACHE_KEY);
@@ -145,14 +149,18 @@ export function useNoteSync(user: User | null) {
             useNotesStore.setState({ notes: cached, topZ: Math.max(...cached.map((n) => n.zIndex), 10) });
             prevNotes.current = cached;
           }
+        } else {
+          prevNotes.current = [];
         }
       } catch { /* ignore */ }
+      setSyncReady(true);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id]);
+  }, [authLoading, user?.id]);
 
   // ── Persist whenever notes change ─────────────────────────────────
   useEffect(() => {
+    if (authLoading || !syncReady) return;
     if (!user) {
       try { localStorage.setItem(CACHE_KEY, JSON.stringify(notes)); } catch { /* quota */ }
       prevNotes.current = [...notes];
@@ -203,7 +211,7 @@ export function useNoteSync(user: User | null) {
 
     prevNotes.current = [...notes];
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [notes, user?.id]);
+  }, [authLoading, notes, syncReady, user?.id]);
 
   // ── Merge helpers ─────────────────────────────────────────────────
   const mergeLocalToCloud = async () => {

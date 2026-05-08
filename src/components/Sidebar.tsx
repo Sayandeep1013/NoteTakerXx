@@ -28,7 +28,7 @@ export default function Sidebar() {
   const isDark = currentTheme.isDark;
   const { user, loading, signInWithGoogle, signOut } = useAuth();
   const { profile } = useProfile(user);
-  const { showMergePrompt, cachedCount, mergeLocalToCloud, discardLocal, dbError } = useNoteSync(user);
+  const { showMergePrompt, cachedCount, mergeLocalToCloud, discardLocal, dbError } = useNoteSync(user, loading);
   const [showProfile, setShowProfile] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
 
