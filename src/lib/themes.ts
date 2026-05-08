@@ -150,4 +150,4 @@ export const THEMES: Record<ThemeName, ThemeConfig> = {
   },
 };
 
-export const DEFAULT_THEME: ThemeName = "paper";
+export const DEFAULT_THEME: ThemeName = "slate";

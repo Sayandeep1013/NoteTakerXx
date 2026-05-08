@@ -90,6 +90,7 @@ export function useNoteSync(user: User | null, authLoading = false) {
   const prevNotes  = useRef<Note[]>([]);
   const timers     = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const loadedFor  = useRef<string | null>(null); // which userId we've loaded
+  const guestHydratedFromCache = useRef(false);
 
   // ── Load: fires when the logged-in user changes ───────────────────
   useEffect(() => {
@@ -141,19 +142,26 @@ export function useNoteSync(user: User | null, authLoading = false) {
 
     } else {
       // Guest — load from localStorage
+      let cachedNotes: Note[] | null = null;
       try {
         const raw = localStorage.getItem(CACHE_KEY);
         if (raw) {
           const cached: Note[] = JSON.parse(raw);
           if (cached.length > 0) {
-            useNotesStore.setState({ notes: cached, topZ: Math.max(...cached.map((n) => n.zIndex), 10) });
-            prevNotes.current = cached;
+            cachedNotes = cached;
           }
-        } else {
-          prevNotes.current = [];
         }
       } catch { /* ignore */ }
-      setSyncReady(true);
+      if (cachedNotes) {
+        useNotesStore.setState({ notes: cachedNotes, topZ: Math.max(...cachedNotes.map((n) => n.zIndex), 10) });
+        prevNotes.current = cachedNotes;
+        guestHydratedFromCache.current = true;
+      } else {
+        prevNotes.current = [];
+        guestHydratedFromCache.current = false;
+      }
+      const readyTimer = window.setTimeout(() => setSyncReady(true), 0);
+      return () => window.clearTimeout(readyTimer);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authLoading, user?.id]);
@@ -162,6 +170,8 @@ export function useNoteSync(user: User | null, authLoading = false) {
   useEffect(() => {
     if (authLoading || !syncReady) return;
     if (!user) {
+      if (notes.length === 0 && guestHydratedFromCache.current) return;
+      guestHydratedFromCache.current = false;
       try { localStorage.setItem(CACHE_KEY, JSON.stringify(notes)); } catch { /* quota */ }
       prevNotes.current = [...notes];
       return;
