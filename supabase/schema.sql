@@ -43,8 +43,13 @@ create table if not exists public.profiles (
   id          uuid        primary key references auth.users(id) on delete cascade,
   username    text,
   avatar_url  text,
+  theme       text,
+  custom_badges jsonb not null default '[]'::jsonb,
   updated_at  timestamptz default now()
 );
+
+alter table public.profiles add column if not exists theme text;
+alter table public.profiles add column if not exists custom_badges jsonb not null default '[]'::jsonb;
 
 alter table public.profiles enable row level security;
 create policy "profiles viewable by all"     on public.profiles for select  using (true);

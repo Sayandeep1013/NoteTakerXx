@@ -18,6 +18,8 @@ type LineType = "bullet" | "todo-open" | "todo-done" | "numbered" | "plain";
 
 function detectLine(line: string): { type: LineType; content: string; num?: number } {
   if (line.startsWith("- "))   return { type: "bullet",    content: line.slice(2) };
+  if (line.startsWith(". "))   return { type: "bullet",    content: line.slice(2) }; // dot bullet
+  if (line.startsWith("• "))   return { type: "bullet",    content: line.slice(2) }; // unicode bullet
   if (line.startsWith("[ ] ")) return { type: "todo-open", content: line.slice(4) };
   if (line.startsWith("[x] ")) return { type: "todo-done", content: line.slice(4) };
   const m = line.match(/^(\d+)\. (.*)/);

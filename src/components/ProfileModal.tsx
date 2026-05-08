@@ -6,6 +6,7 @@ import { useProfile } from "@/hooks/useProfile";
 import { useTheme } from "@/hooks/useTheme";
 import { useAuth } from "@/hooks/useAuth";
 import { useNotesStore } from "@/store/notes";
+import { DEFAULT_BADGES } from "@/lib/badges";
 
 interface Props { user: User; onClose: () => void; }
 
@@ -25,6 +26,7 @@ export default function ProfileModal({ user, onClose }: Props) {
   const { signOut } = useAuth();
   const notes  = useNotesStore((s) => s.notes);
   const setPan = useNotesStore((s) => s.setPan);
+  const customBadges = useNotesStore((s) => s.customBadges);
   const G = 80;
 
   const [username, setUsername]   = useState("");
@@ -32,6 +34,8 @@ export default function ProfileModal({ user, onClose }: Props) {
   const [uploading, setUploading] = useState(false);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [search, setSearch]       = useState("");
+  const [badgeFilter, setBadgeFilter] = useState<string | null>(null);
+  const [filterOpen, setFilterOpen] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
@@ -84,7 +88,17 @@ export default function ProfileModal({ user, onClose }: Props) {
       const q = search.toLowerCase();
       return !q || n.title.toLowerCase().includes(q) || n.body.toLowerCase().includes(q);
     })
+    .filter((n) => !badgeFilter || n.badges.includes(badgeFilter))
     .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
+  const allBadges = [
+    ...DEFAULT_BADGES,
+    ...customBadges.map((cb) => ({
+      id: cb.id, label: cb.label, color: "#888",
+      Icon: ({ size = 28 }: { size?: number }) => (
+        <img src={cb.url} alt={cb.label} style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover" }} />
+      ),
+    })),
+  ];
 
   // Theme tokens
   const glass   = isDark ? "rgba(18,16,28,0.95)"  : "rgba(250,250,255,0.95)";
@@ -274,31 +288,75 @@ export default function ProfileModal({ user, onClose }: Props) {
             <div style={{ fontSize: 15, fontWeight: 700, color: text, marginBottom: 12 }}>
               All notes <span style={{ fontWeight: 400, fontSize: 12, color: muted, marginLeft: 4 }}>{notes.length}</span>
             </div>
-            <div style={{ position: "relative" }}>
-              <svg style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", opacity: 0.4, pointerEvents: "none" }} width="13" height="13" viewBox="0 0 13 13" fill="none">
-                <circle cx="5.5" cy="5.5" r="4" stroke={text} strokeWidth="1.3"/>
-                <line x1="8.5" y1="8.5" x2="11.5" y2="11.5" stroke={text} strokeWidth="1.3" strokeLinecap="round"/>
-              </svg>
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search notes…"
+            <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ position: "relative", flex: 1 }}>
+                <svg style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", opacity: 0.4, pointerEvents: "none" }} width="13" height="13" viewBox="0 0 13 13" fill="none">
+                  <circle cx="5.5" cy="5.5" r="4" stroke={text} strokeWidth="1.3"/>
+                  <line x1="8.5" y1="8.5" x2="11.5" y2="11.5" stroke={text} strokeWidth="1.3" strokeLinecap="round"/>
+                </svg>
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search notes..."
+                  style={{
+                    width: "100%", padding: "8px 10px 8px 30px",
+                    borderRadius: 10, background: inp,
+                    border: `1px solid ${bdr}`,
+                    color: text, fontSize: 13, fontFamily: "inherit", outline: "none",
+                    boxSizing: "border-box",
+                  }}
+                />
+              </div>
+              <button
+                onClick={() => setFilterOpen((v) => !v)}
+                title="Filter"
                 style={{
-                  width: "100%", padding: "8px 10px 8px 30px",
-                  borderRadius: 10, background: inp,
-                  border: `1px solid ${bdr}`,
-                  color: text, fontSize: 13, fontFamily: "inherit", outline: "none",
-                  boxSizing: "border-box",
+                  width: 34, height: 34, borderRadius: 10,
+                  background: badgeFilter ? `${theme.accent}22` : inp,
+                  border: `1px solid ${badgeFilter ? theme.accent : bdr}`,
+                  color: text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
                 }}
-              />
+              >
+                <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><path d="M2 3h11L9 7.6v3.2l-3 1.4V7.6L2 3Z" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              </button>
             </div>
+            {filterOpen && (
+              <div style={{ marginTop: 8, padding: 9, borderRadius: 10, background: inp, border: `1px solid ${bdr}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 7 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: text }}>Filter by badge</span>
+                  {badgeFilter && <button onClick={() => setBadgeFilter(null)} style={{ background: "transparent", border: "none", color: muted, fontSize: 11, cursor: "pointer" }}>Clear</button>}
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {allBadges.map((badge) => {
+                    const active = badgeFilter === badge.id;
+                    const { Icon } = badge;
+                    return (
+                      <button
+                        key={badge.id}
+                        title={badge.label}
+                        onClick={() => setBadgeFilter(active ? null : badge.id)}
+                        style={{
+                          width: 32, height: 32, padding: 3, borderRadius: 8,
+                          background: active ? `${badge.color}22` : "transparent",
+                          border: `1.5px solid ${active ? badge.color : "transparent"}`,
+                          opacity: badgeFilter && !active ? 0.3 : 1,
+                          cursor: "pointer",
+                        }}
+                      >
+                        <Icon size={24} />
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* List */}
           <div style={{ flex: 1, overflow: "auto", padding: "0 16px 16px" }}>
             {sorted.length === 0 ? (
               <div style={{ textAlign: "center", marginTop: 60, color: muted, fontSize: 14 }}>
-                {search ? "No notes match" : "No notes yet — click + to create one"}
+                {search || badgeFilter ? "No notes match" : "No notes yet - click + to create one"}
               </div>
             ) : sorted.map((n) => {
               const noteColor = theme.noteColors[n.color] ?? "#ccc";

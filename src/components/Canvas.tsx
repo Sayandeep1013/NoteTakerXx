@@ -9,7 +9,7 @@ import ResourceMonitor from "./ResourceMonitor";
 import ConnectionLayer from "./ConnectionLayer";
 
 export default function Canvas() {
-  const { notes, canvas, setPan, addNote, connectionMode, setConnectionMode } = useNotesStore();
+  const { notes, canvas, setPan, addNote, connectionMode, setConnectionMode, badgeFilter } = useNotesStore();
   const surfaceRef = useRef<HTMLDivElement>(null);
   const panState = useRef({ active: false, startX: 0, startY: 0, panX: 0, panY: 0 });
   const panRef = useRef({ x: canvas.panX, y: canvas.panY });
@@ -51,6 +51,7 @@ export default function Canvas() {
   };
 
   const onPointerUp = () => { panState.current.active = false; setCursor("default"); };
+  const visibleNotes = badgeFilter ? notes.filter((note) => note.badges.includes(badgeFilter)) : notes;
 
   return (
     <div
@@ -87,8 +88,8 @@ export default function Canvas() {
         className="canvas-world"
         style={{ transform: `translate(${canvas.panX}px, ${canvas.panY}px)`, zIndex: 2 }}
       >
-        <ConnectionLayer notes={notes} gridUnit={80} />
-        {notes.map((note) => (
+        <ConnectionLayer notes={visibleNotes} gridUnit={80} />
+        {visibleNotes.map((note) => (
           <Note key={note.id} note={note} gridUnit={80} />
         ))}
       </div>

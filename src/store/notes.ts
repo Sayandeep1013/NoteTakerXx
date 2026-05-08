@@ -12,6 +12,10 @@ const GRID = 80;
 export const SIDEBAR_W_OPEN   = 220;
 export const SIDEBAR_W_CLOSED = 48;
 
+function createNoteId() {
+  return globalThis.crypto?.randomUUID?.() ?? nanoid();
+}
+
 export interface CustomBadge {
   id: string;
   label: string;
@@ -66,6 +70,7 @@ interface NotesStore {
   setBadgeMode: (id: string | null) => void;
   toggleNoteBadge: (noteId: string, badgeId: string) => void;
   addCustomBadge: (badge: CustomBadge) => void;
+  setCustomBadges: (badges: CustomBadge[]) => void;
   setNewNoteId: (id: string | null) => void;
   addConnection: (sourceId: string, targetId: string, color?: string) => void;
   deleteConnection: (id: string) => void;
@@ -74,6 +79,10 @@ interface NotesStore {
   setFocusedNoteId: (id: string | null) => void;
   pendingInsert: "bullet" | "todo" | null;
   setPendingInsert: (type: "bullet" | "todo" | null) => void;
+  badgeFilter: string | null;
+  setBadgeFilter: (id: string | null) => void;
+  noteSearch: string;
+  setNoteSearch: (query: string) => void;
 }
 
 // Find first free MIN_SIZE slot scanning top-left → bottom-right
@@ -123,6 +132,8 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
   connectionMode: null,
   focusedNoteId: null,
   pendingInsert: null,
+  badgeFilter: null,
+  noteSearch: "",
 
   addNote: () => {
     const { notes, topZ, canvas, sidebarOpen } = get();
@@ -178,7 +189,7 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
       };
     }
 
-    const newId = nanoid();
+    const newId = createNoteId();
     set({
       notes: [...notes, {
         id: newId,
@@ -219,6 +230,9 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
   setConnectionMode: (id) => set({ connectionMode: id }),
   setFocusedNoteId: (id) => set({ focusedNoteId: id }),
   setPendingInsert: (type) => set({ pendingInsert: type }),
+  setBadgeFilter: (id) => set({ badgeFilter: id }),
+  setNoteSearch: (query) => set({ noteSearch: query }),
+  setCustomBadges: (badges) => set({ customBadges: badges }),
   addCustomBadge: (badge) => set((s) => ({ customBadges: [...s.customBadges, badge] })),
   toggleNoteBadge: (noteId, badgeId) =>
     set((s) => ({

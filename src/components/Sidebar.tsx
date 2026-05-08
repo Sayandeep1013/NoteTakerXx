@@ -1,27 +1,89 @@
 "use client";
 
 import { createPortal } from "react-dom";
-import { useState, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNotesStore, SIDEBAR_W_OPEN, SIDEBAR_W_CLOSED } from "@/store/notes";
 import { DEFAULT_BADGES } from "@/lib/badges";
 import { useTheme } from "@/hooks/useTheme";
 import { THEMES, type ThemeName } from "@/lib/themes";
+import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useProfile } from "@/hooks/useProfile";
 import { useNoteSync } from "@/hooks/useNoteSync";
 import ProfileModal from "./ProfileModal";
 
 export default function Sidebar() {
-  const { sidebarOpen, setSidebarOpen, theme: themeName, setTheme, badgeMode, setBadgeMode, customBadges, addCustomBadge, focusedNoteId, setPendingInsert } = useNotesStore();
+  const {
+    notes, setPan,
+    sidebarOpen, setSidebarOpen,
+    theme: themeName, setTheme,
+    badgeMode, setBadgeMode,
+    customBadges, addCustomBadge, setCustomBadges,
+    badgeFilter, setBadgeFilter,
+    noteSearch, setNoteSearch,
+  } = useNotesStore();
   const customBadgeRef = useRef<HTMLInputElement>(null);
+  const customBadgesReady = useRef(false);
   const currentTheme = useTheme();
   const isDark = currentTheme.isDark;
   const { user, loading, signInWithGoogle, signOut } = useAuth();
   const { profile } = useProfile(user);
-  const { showMergePrompt, cachedCount, mergeLocalToCloud, discardLocal } = useNoteSync(user);
+  const { showMergePrompt, cachedCount, mergeLocalToCloud, discardLocal, dbError } = useNoteSync(user);
   const [showProfile, setShowProfile] = useState(false);
+  const [filterOpen, setFilterOpen] = useState(false);
 
   const w = sidebarOpen ? SIDEBAR_W_OPEN : SIDEBAR_W_CLOSED;
+  const allBadges = useMemo(() => [
+    ...DEFAULT_BADGES,
+    ...customBadges.map(cb => ({
+      id: cb.id, label: cb.label, color: "#888", ring: "#666",
+      Icon: ({ size = 28 }: { size?: number }) => (
+        <img src={cb.url} alt={cb.label} style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover" }} />
+      ),
+    })),
+  ], [customBadges]);
+  const visibleList = useMemo(() => {
+    const q = noteSearch.trim().toLowerCase();
+    return notes
+      .filter((note) => !badgeFilter || note.badges.includes(badgeFilter))
+      .filter((note) => !q || note.title.toLowerCase().includes(q) || note.body.toLowerCase().includes(q))
+      .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
+  }, [badgeFilter, noteSearch, notes]);
+
+  useEffect(() => {
+    customBadgesReady.current = false;
+    if (!user) {
+      setCustomBadges([]);
+      return;
+    }
+    const sb = createClient();
+    sb.from("profiles").select("custom_badges").eq("id", user.id).single().then(({ data, error }) => {
+      if (error) {
+        console.warn("[Sidebar] custom_badges load:", error.message);
+        customBadgesReady.current = true;
+        return;
+      }
+      if (Array.isArray(data?.custom_badges)) setCustomBadges(data.custom_badges);
+      customBadgesReady.current = true;
+    });
+  }, [setCustomBadges, user]);
+
+  useEffect(() => {
+    if (!user || !customBadgesReady.current) return;
+    const sb = createClient();
+    sb.from("profiles").upsert({ id: user.id, custom_badges: customBadges }, { onConflict: "id" }).then(({ error }) => {
+      if (error) console.warn("[Sidebar] custom_badges save:", error.message);
+    });
+  }, [customBadges, user]);
+
+  const navigateToNote = (note: typeof notes[number]) => {
+    const G = 80;
+    setPan(window.innerWidth / 2 - (note.x * G + note.w * G / 2), window.innerHeight / 2 - (note.y * G + note.h * G / 2));
+  };
+
+  const createCustomBadge = (file: File, url: string) => {
+    addCustomBadge({ id: `custom_${Date.now()}`, label: file.name.replace(/\.[^.]+$/, ""), url });
+  };
 
   return (
     <>
@@ -64,28 +126,12 @@ export default function Sidebar() {
             </span>
           )}
           <ThemePicker open={sidebarOpen} current={themeName} onChange={setTheme} isDark={isDark} />
-          <Divider isDark={isDark} />
-          {sidebarOpen && (
-            <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.09em", color: "var(--text-muted)", padding: "6px 6px 2px" }}>
-              FORMATTING
-            </span>
+          {/* DB error banner */}
+          {dbError && sidebarOpen && (
+            <div style={{ margin: "4px 0", padding: "8px 10px", borderRadius: 8, background: "rgba(220,50,50,0.12)", border: "1px solid rgba(220,50,50,0.25)", fontSize: 11, color: "#e05050", lineHeight: 1.4 }}>
+              {dbError}
+            </div>
           )}
-          <SidebarBtn
-            open={sidebarOpen}
-            onClick={() => setPendingInsert("bullet")}
-            icon={<BulletIcon />}
-            label="Bullet list"
-            title={focusedNoteId ? "Insert bullet point (Ctrl + .)" : "Select a note first"}
-            disabled={!focusedNoteId}
-          />
-          <SidebarBtn
-            open={sidebarOpen}
-            onClick={() => setPendingInsert("todo")}
-            icon={<TodoIcon />}
-            label="To-do list"
-            title={focusedNoteId ? "Insert to-do (Ctrl + /)" : "Select a note first"}
-            disabled={!focusedNoteId}
-          />
 
           <Divider isDark={isDark} />
           {sidebarOpen && (
@@ -102,13 +148,9 @@ export default function Sidebar() {
             alignItems: "center",
             justifyContent: sidebarOpen ? "flex-start" : "center",
           }}>
-            {[...DEFAULT_BADGES, ...customBadges.map(cb => ({
-              id: cb.id, label: cb.label, color: "#888", ring: "#666",
-              Icon: ({ size = 28 }: { size?: number }) => (
-                <img src={cb.url} alt={cb.label} style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover" }} />
-              ),
-            }))].map((badge) => {
+            {allBadges.map((badge) => {
               const active = badgeMode === badge.id;
+              const filtered = badgeFilter === badge.id;
               const { Icon } = badge;
               return (
                 <button
@@ -117,13 +159,14 @@ export default function Sidebar() {
                   title={active ? `Cancel (${badge.label} mode)` : `Place "${badge.label}" badge on a note`}
                   style={{
                     width: 36, height: 36, borderRadius: 8, padding: 3,
-                    background: active ? `${badge.color}22` : "transparent",
-                    border: `1.5px solid ${active ? badge.color : "transparent"}`,
+                    background: active || filtered ? `${badge.color}22` : "transparent",
+                    border: `1.5px solid ${active || filtered ? badge.color : "transparent"}`,
                     cursor: "pointer",
                     display: "flex", alignItems: "center", justifyContent: "center",
                     transition: "all 150ms",
                     flexShrink: 0,
                     boxShadow: active ? `0 0 0 2px ${badge.color}44` : "none",
+                    opacity: badgeFilter && !filtered ? 0 : 1,
                   }}
                 >
                   <Icon size={28} />
@@ -156,7 +199,7 @@ export default function Sidebar() {
                 const reader = new FileReader();
                 reader.onload = (ev) => {
                   const url = ev.target?.result as string;
-                  addCustomBadge({ id: `custom_${Date.now()}`, label: file.name.replace(/\.[^.]+$/, ""), url });
+                  createCustomBadge(file, url);
                 };
                 reader.readAsDataURL(file);
               }}
@@ -166,6 +209,116 @@ export default function Sidebar() {
             <div style={{ fontSize: 11, color: "var(--accent)", padding: "0 8px 4px", fontStyle: "italic" }}>
               Click any note to place badge
             </div>
+          )}
+
+          <Divider isDark={isDark} />
+          {sidebarOpen ? (
+            <div style={{ padding: "4px 6px 6px", display: "flex", flexDirection: "column", gap: 7 }}>
+              <div style={{ display: "flex", gap: 6 }}>
+                <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
+                  <SearchIcon style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", opacity: 0.45, pointerEvents: "none" }} />
+                  <input
+                    value={noteSearch}
+                    onChange={(e) => setNoteSearch(e.target.value)}
+                    placeholder="Search notes"
+                    style={{
+                      width: "100%", height: 30, padding: "0 9px 0 28px",
+                      borderRadius: 8, border: `1px solid ${isDark ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.10)"}`,
+                      background: isDark ? "rgba(255,255,255,0.055)" : "rgba(0,0,0,0.045)",
+                      color: "var(--text-ui)", outline: "none", fontSize: 12, fontFamily: "inherit",
+                      boxSizing: "border-box",
+                    }}
+                  />
+                </div>
+                <button
+                  onClick={() => setFilterOpen((v) => !v)}
+                  title="Filter"
+                  style={{
+                    width: 30, height: 30, borderRadius: 8, border: `1px solid ${badgeFilter ? currentTheme.accent : "transparent"}`,
+                    background: badgeFilter ? `${currentTheme.accent}22` : "var(--btn-hover)",
+                    color: "var(--text-ui)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                    flexShrink: 0,
+                  }}
+                >
+                  <FilterIcon />
+                </button>
+              </div>
+
+              {filterOpen && (
+                <div style={{
+                  borderRadius: 10,
+                  border: `1px solid ${isDark ? "rgba(255,255,255,0.09)" : "rgba(0,0,0,0.08)"}`,
+                  background: isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.035)",
+                  padding: 8,
+                }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 7 }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-ui)" }}>Filter</span>
+                    {badgeFilter && (
+                      <button onClick={() => setBadgeFilter(null)} style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 11 }}>
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 10, color: "var(--text-muted)", marginBottom: 6 }}>Badge</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                    {allBadges.map((badge) => {
+                      const active = badgeFilter === badge.id;
+                      const { Icon } = badge;
+                      return (
+                        <button
+                          key={badge.id}
+                          title={badge.label}
+                          onClick={() => setBadgeFilter(active ? null : badge.id)}
+                          style={{
+                            width: 31, height: 31, borderRadius: 8, padding: 3,
+                            border: `1.5px solid ${active ? badge.color : "transparent"}`,
+                            background: active ? `${badge.color}22` : "transparent",
+                            opacity: badgeFilter && !active ? 0 : 1,
+                            cursor: "pointer",
+                          }}
+                        >
+                          <Icon size={23} />
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {(noteSearch || badgeFilter) && (
+                <div style={{ flex: 1, minHeight: 70, overflow: "auto", paddingRight: 2 }}>
+                  {visibleList.length === 0 ? (
+                    <div style={{ color: "var(--text-muted)", fontSize: 11, padding: "8px 2px" }}>No matching notes</div>
+                  ) : visibleList.map((note) => (
+                    <button
+                      key={note.id}
+                      onClick={() => navigateToNote(note)}
+                      style={{
+                        width: "100%", display: "flex", alignItems: "center", gap: 8,
+                        padding: "6px 7px", marginBottom: 3, borderRadius: 8,
+                        background: "transparent", border: "none", color: "var(--text-ui)",
+                        cursor: "pointer", textAlign: "left", fontFamily: "inherit",
+                      }}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--btn-hover)"; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+                    >
+                      <span style={{ width: 16, height: 16, borderRadius: 4, background: currentTheme.noteColors[note.color], flexShrink: 0 }} />
+                      <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12 }}>
+                        {note.title || note.body || "Untitled"}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <SidebarBtn
+              open={sidebarOpen}
+              onClick={() => { setSidebarOpen(true); setFilterOpen(true); }}
+              icon={<FilterIcon />}
+              label="Filter"
+              title="Search and filter"
+            />
           )}
         </div>
 
@@ -386,22 +539,8 @@ function Divider({ isDark }: { isDark: boolean }) {
 /* ── Icons ── */
 function ChevronLeft() { return <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 12L6 8l4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
 function ChevronRight() { return <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
-function SunIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <circle cx="8" cy="8" r="3" stroke="currentColor" strokeWidth="1.5"/>
-      {[0,45,90,135,180,225,270,315].map((deg) => {
-        const r = deg * Math.PI / 180;
-        const x1 = 8 + Math.cos(r) * 4.8, y1 = 8 + Math.sin(r) * 4.8;
-        const x2 = 8 + Math.cos(r) * 6.2, y2 = 8 + Math.sin(r) * 6.2;
-        return <line key={deg} x1={x1} y1={y1} x2={x2} y2={y2} stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>;
-      })}
-    </svg>
-  );
-}
-function MoonIcon() { return <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M13.5 10A6 6 0 016 2.5a5.5 5.5 0 100 11 6 6 0 007.5-3.5z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
-function BulletIcon() { return <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="3" cy="5" r="1.5" fill="currentColor"/><line x1="6" y1="5" x2="14" y2="5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><circle cx="3" cy="9" r="1.5" fill="currentColor"/><line x1="6" y1="9" x2="14" y2="9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><circle cx="3" cy="13" r="1.5" fill="currentColor"/><line x1="6" y1="13" x2="14" y2="13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>; }
-function TodoIcon() { return <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="4" width="3" height="3" rx="0.75" stroke="currentColor" strokeWidth="1.4"/><line x1="7" y1="5.5" x2="14" y2="5.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><rect x="2" y="9" width="3" height="3" rx="0.75" stroke="currentColor" strokeWidth="1.4"/><line x1="7" y1="10.5" x2="14" y2="10.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>; }
+function SearchIcon({ style }: { style?: React.CSSProperties }) { return <svg style={style} width="13" height="13" viewBox="0 0 13 13" fill="none"><circle cx="5.5" cy="5.5" r="4" stroke="currentColor" strokeWidth="1.3"/><line x1="8.5" y1="8.5" x2="11.5" y2="11.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/></svg>; }
+function FilterIcon() { return <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><path d="M2 3h11L9 7.6v3.2l-3 1.4V7.6L2 3Z" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
 function SignOutIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
