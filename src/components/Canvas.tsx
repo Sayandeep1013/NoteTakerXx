@@ -10,8 +10,15 @@ import ResourceMonitor from "./ResourceMonitor";
 import ConnectionLayer from "./ConnectionLayer";
 import UniversalSearch from "./UniversalSearch";
 import { useHudScale } from "@/hooks/useHudScale";
+import { useTheme } from "@/hooks/useTheme";
+import { NOTE_COLOR_KEYS, type NoteColor } from "@/lib/colors";
+import upiQr from "../../images/upi qr.jpeg";
 
-const SHOW_COFFEE_BUTTON = false;
+const SHOW_COFFEE_BUTTON = true;
+
+function randomNoteColor(): NoteColor {
+  return NOTE_COLOR_KEYS[Math.floor(Math.random() * NOTE_COLOR_KEYS.length)];
+}
 
 export default function Canvas() {
   const { notes, canvas, setPan, addNote, connectionMode, setConnectionMode, badgeFilter, coffeeVisible, setCoffeeVisible } = useNotesStore();
@@ -205,22 +212,35 @@ export default function Canvas() {
 }
 
 function CoffeeButton({ onHide }: { onHide: () => void }) {
+  const theme = useTheme();
+  const isDark = theme.isDark;
   const [open, setOpen] = useState(false);
   const [qrMissing, setQrMissing] = useState(false);
+  const [paperColor, setPaperColor] = useState<NoteColor>(() => randomNoteColor());
+  const paper = theme.noteColors[paperColor] ?? theme.noteColors.yellow;
+  const line = isDark ? "rgba(0,0,0,0.20)" : "rgba(0,0,0,0.085)";
+  const text = theme.noteText;
+  const muted = isDark ? "rgba(240,234,216,0.62)" : "rgba(26,26,26,0.56)";
+  const frosted = isDark ? "rgba(18,18,22,0.24)" : "rgba(255,255,255,0.42)";
+  const frostedBorder = isDark ? "rgba(255,245,220,0.14)" : "rgba(0,0,0,0.12)";
 
   return (
     <>
       <button
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          setPaperColor(randomNoteColor());
+          setOpen(true);
+        }}
         title="Buy me a coffee"
         style={{
           position: "fixed",
-          right: 96,
-          bottom: 38,
+          right: 36,
+          bottom: 98,
           zIndex: 500,
-          height: 40,
-          padding: "0 16px",
-          borderRadius: 999,
+          width: 44,
+          height: 44,
+          padding: 0,
+          borderRadius: "50%",
           border: "1px solid rgba(255,255,255,0.18)",
           background: "rgba(18,18,22,0.78)",
           backdropFilter: "blur(18px)",
@@ -230,6 +250,9 @@ function CoffeeButton({ onHide }: { onHide: () => void }) {
           fontWeight: 700,
           fontFamily: "inherit",
           cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
           boxShadow: "0 8px 28px rgba(0,0,0,0.22)",
           transition: "transform 150ms, box-shadow 150ms",
         }}
@@ -242,7 +265,7 @@ function CoffeeButton({ onHide }: { onHide: () => void }) {
           e.currentTarget.style.boxShadow = "0 8px 28px rgba(0,0,0,0.22)";
         }}
       >
-        Buy me a coffee
+        <CoffeeCupIcon />
       </button>
 
       {open && createPortal(
@@ -251,7 +274,7 @@ function CoffeeButton({ onHide }: { onHide: () => void }) {
           style={{
             position: "fixed", inset: 0,
             zIndex: 700,
-            background: "rgba(0,0,0,0.48)",
+            background: isDark ? "rgba(0,0,0,0.58)" : "rgba(20,18,24,0.36)",
             backdropFilter: "blur(8px)",
             WebkitBackdropFilter: "blur(8px)",
             display: "flex",
@@ -262,72 +285,135 @@ function CoffeeButton({ onHide }: { onHide: () => void }) {
           <div
             onClick={(e) => e.stopPropagation()}
             style={{
-              width: "min(340px, 92vw)",
-              borderRadius: 18,
-              padding: 22,
-              background: "rgba(250,250,255,0.96)",
-              border: "1px solid rgba(0,0,0,0.08)",
-              boxShadow: "0 32px 90px rgba(0,0,0,0.28)",
+              position: "relative",
+              width: "min(360px, 92vw)",
+              borderRadius: 16,
+              padding: "34px 28px 24px",
+              background: paper,
+              backgroundImage: `repeating-linear-gradient(transparent, transparent 23px, ${line} 23px, ${line} 24.5px)`,
+              backgroundSize: "100% 24.5px",
+              color: text,
+              boxShadow: isDark ? "0 42px 120px rgba(0,0,0,0.76)" : "0 36px 96px rgba(0,0,0,0.26)",
               animation: "coffeeIn 220ms cubic-bezier(0.34,1.4,0.64,1)",
               textAlign: "center",
+              transform: "rotate(-0.65deg)",
             }}
           >
+            <div style={{
+              position: "absolute",
+              top: -10,
+              left: "50%",
+              transform: "translateX(-50%)",
+              width: 62,
+              height: 21,
+              borderRadius: 3,
+              background: isDark ? "rgba(255,250,200,0.24)" : "rgba(255,253,200,0.68)",
+              boxShadow: "0 1px 4px rgba(0,0,0,0.12)",
+            }} />
             <button
               onClick={() => setOpen(false)}
               style={{
-                float: "right",
+                position: "absolute",
+                top: 10,
+                right: 12,
                 width: 26, height: 26, borderRadius: "50%",
-                border: "none", background: "rgba(0,0,0,0.06)",
-                cursor: "pointer", color: "rgba(0,0,0,0.5)",
+                border: `1px solid ${frostedBorder}`,
+                background: frosted,
+                backdropFilter: "blur(10px)",
+                WebkitBackdropFilter: "blur(10px)",
+                cursor: "pointer", color: muted,
                 fontSize: 16, lineHeight: "26px",
               }}
             >
               x
             </button>
-            <div style={{ clear: "both" }} />
-            <h2 style={{ margin: "0 0 16px", fontSize: 20, color: "#161616" }}>Buy me a coffee</h2>
+            <h2 style={{ margin: "0 0 16px", fontSize: 20, color: text }}>Buy me a coffee</h2>
             <div style={{
               width: 220,
               height: 220,
               margin: "0 auto 18px",
               borderRadius: 14,
-              background: "rgba(0,0,0,0.045)",
-              border: "1px solid rgba(0,0,0,0.08)",
+              background: frosted,
+              border: `1px solid ${frostedBorder}`,
+              backdropFilter: "blur(12px)",
+              WebkitBackdropFilter: "blur(12px)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               overflow: "hidden",
             }}>
               {qrMissing ? (
-                <div style={{ padding: 18, fontSize: 12, lineHeight: 1.45, color: "rgba(0,0,0,0.48)" }}>
+                <div style={{ padding: 18, fontSize: 12, lineHeight: 1.45, color: muted }}>
                   Add your UPI QR image as <strong>public/upi-qr.png</strong>
                 </div>
               ) : (
                 <img
-                  src="/upi-qr.png"
+                  src={upiQr.src}
                   alt="UPI QR code"
                   onError={() => setQrMissing(true)}
                   style={{ width: "100%", height: "100%", objectFit: "contain", background: "#fff" }}
                 />
               )}
             </div>
-            <button
-              onClick={() => { onHide(); setOpen(false); }}
+            <div
               style={{
                 width: "100%",
-                height: 38,
+                minHeight: 38,
+                padding: "6px 8px 6px 12px",
                 borderRadius: 10,
-                border: "1px solid rgba(0,0,0,0.10)",
-                background: "rgba(0,0,0,0.045)",
-                color: "#242424",
-                cursor: "pointer",
-                fontSize: 13,
-                fontWeight: 700,
+                border: `1px solid ${frostedBorder}`,
+                background: frosted,
+                backdropFilter: "blur(10px)",
+                WebkitBackdropFilter: "blur(10px)",
+                color: text,
                 fontFamily: "inherit",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 10,
+                boxSizing: "border-box",
               }}
             >
-              Hide it
-            </button>
+              <span style={{ fontSize: 12, color: muted }}>Hide coffee button?</span>
+              <span style={{ display: "flex", gap: 6 }}>
+                <button
+                  onClick={() => { onHide(); setOpen(false); }}
+                  title="Hide coffee button"
+                  style={{
+                    width: 30,
+                    height: 28,
+                    borderRadius: 9,
+                    border: `1px solid ${theme.accent}`,
+                    background: `${theme.accent}26`,
+                    color: theme.accent,
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <HandCheckIcon />
+                </button>
+                <button
+                  onClick={() => setOpen(false)}
+                  title="Keep coffee button"
+                  style={{
+                    width: 30,
+                    height: 28,
+                    borderRadius: 9,
+                    border: `1px solid ${frostedBorder}`,
+                    background: frosted,
+                    color: muted,
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <HandCrossIcon />
+                </button>
+              </span>
+            </div>
           </div>
           <style>{`
             @keyframes coffeeIn {
@@ -339,5 +425,34 @@ function CoffeeButton({ onHide }: { onHide: () => void }) {
         document.body
       )}
     </>
+  );
+}
+
+function CoffeeCupIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M6 9.2h9.4v4.7c0 2.5-1.8 4.1-4.7 4.1S6 16.4 6 13.9V9.2Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M15.4 10.5h1.4c1.4 0 2.3.8 2.3 1.9s-.9 2-2.3 2h-1.4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M8.2 6.1c-.4-.8.5-1.2.2-2M11.2 6.1c-.4-.8.5-1.2.2-2M14.1 6.1c-.4-.8.5-1.2.2-2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M5 20h12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function HandCheckIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+      <path d="M3.6 9.4c1.2 1.1 2.4 2.5 3.4 3.4 1.7-2.9 4.2-5.7 7.3-8.1" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4.2 9.1c1.1 1 2 2.1 2.8 2.8" stroke="currentColor" strokeWidth="0.8" strokeLinecap="round" opacity="0.55" />
+    </svg>
+  );
+}
+
+function HandCrossIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+      <path d="M4.4 4.8c2.8 2.5 5.6 5.5 8.9 8.3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <path d="M13.1 4.5c-2.4 2.8-5.6 5.5-8.4 8.8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
   );
 }

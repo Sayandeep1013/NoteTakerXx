@@ -15,6 +15,7 @@ create table if not exists public.notes (
   z_index     integer     not null default 10,
   title       text        not null default '',
   body        text        not null default '',
+  font_size   integer     not null default 13,
   badges      text[]      not null default '{}',
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now()
@@ -22,6 +23,7 @@ create table if not exists public.notes (
 
 -- If table already exists, add the badges column:
 -- ALTER TABLE public.notes ADD COLUMN IF NOT EXISTS badges text[] NOT NULL DEFAULT '{}';
+-- ALTER TABLE public.notes ADD COLUMN IF NOT EXISTS font_size integer NOT NULL DEFAULT 13;
 
 create or replace function public.handle_updated_at()
 returns trigger language plpgsql as $$

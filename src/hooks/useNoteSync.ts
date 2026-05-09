@@ -7,6 +7,7 @@ import type { Note } from "@/store/notes";
 import type { User } from "@supabase/supabase-js";
 
 const CACHE_KEY  = "nxtaker_notes";
+const USER_CACHE_PREFIX = "nxtaker_user_notes_";
 const DEBOUNCE   = 800;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -33,25 +34,49 @@ function safeTopZ(notes: Note[]) {
   return Math.max(10, ...notes.map((n) => n.zIndex));
 }
 
-function readGuestCache(): Note[] {
+function normalizeNote(note: Note): Note {
+  return { ...note, fontSize: note.fontSize ?? 13 };
+}
+
+function readNotesCache(key: string): Note[] {
   try {
-    const raw = localStorage.getItem(CACHE_KEY);
+    const raw = localStorage.getItem(key);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as Note[] | GuestCache;
-    if (Array.isArray(parsed)) return parsed;
-    if (Array.isArray(parsed.notes)) return parsed.notes;
+    if (Array.isArray(parsed)) return parsed.map(normalizeNote);
+    if (Array.isArray(parsed.notes)) return parsed.notes.map(normalizeNote);
   } catch {}
   return [];
 }
 
-function writeGuestCache(notes: Note[]) {
+function writeNotesCache(key: string, notes: Note[]) {
   const payload: GuestCache = {
     version: 2,
-    notes,
+    notes: notes.map(normalizeNote),
     topZ: safeTopZ(notes),
     savedAt: new Date().toISOString(),
   };
-  localStorage.setItem(CACHE_KEY, JSON.stringify(payload));
+  localStorage.setItem(key, JSON.stringify(payload));
+}
+
+function userCacheKey(userId: string) {
+  return `${USER_CACHE_PREFIX}${userId}`;
+}
+
+function readGuestCache(): Note[] {
+  return readNotesCache(CACHE_KEY);
+}
+
+function readUserCache(userId: string): Note[] {
+  return readNotesCache(userCacheKey(userId));
+}
+
+function writeGuestCache(notes: Note[]) {
+  writeNotesCache(CACHE_KEY, notes);
+}
+
+function writeUserCache(userId: string, notes: Note[]) {
+  writeNotesCache(userCacheKey(userId), notes);
 }
 
 // ── Row mapping ────────────────────────────────────────────────────
@@ -68,6 +93,7 @@ function toRow(n: Note, userId: string, includeBadges: boolean) {
     z_index:  n.zIndex,
     title:    n.title,
     body:     n.body,
+    font_size: n.fontSize ?? 13,
     // created_at is set only on INSERT (DB default) — not touched on UPDATE
   };
   if (includeBadges) row.badges = n.badges;
@@ -85,6 +111,7 @@ function fromRow(r: Record<string, unknown>): Note {
     zIndex:    r.z_index as number,
     title:     r.title as string,
     body:      r.body as string,
+    fontSize:  (r.font_size as number | undefined) ?? 13,
     badges:    (r.badges as string[] | null) ?? [],
     createdAt: (r.created_at as string | undefined) ?? new Date().toISOString(),
   };
@@ -96,13 +123,29 @@ async function resilientUpsert(
   note: Note,
   userId: string,
 ) {
-  let { error } = await supabase.from("notes").upsert(toRow(note, userId, true));
+  const fullRow = toRow(note, userId, true);
+  let { error } = await supabase.from("notes").upsert(fullRow);
   if (error) {
     // If the error is about the badges column, retry without it
     const isBadgesError = error.message.toLowerCase().includes("badges") ||
       error.code === "42703"; // undefined_column in postgres
     if (isBadgesError) {
       const retry = await supabase.from("notes").upsert(toRow(note, userId, false));
+      error = retry.error;
+    }
+    const isFontSizeError = error?.message.toLowerCase().includes("font_size") ||
+      error?.code === "42703";
+    if (isFontSizeError) {
+      const retryRow = { ...fullRow };
+      delete retryRow.font_size;
+      const retry = await supabase.from("notes").upsert(retryRow);
+      error = retry.error;
+    }
+    if (error?.code === "42703") {
+      const retryRow = { ...fullRow };
+      delete retryRow.font_size;
+      delete retryRow.badges;
+      const retry = await supabase.from("notes").upsert(retryRow);
       error = retry.error;
     }
   }
@@ -121,6 +164,7 @@ export function useNoteSync(user: User | null, authLoading = false) {
 
   const prevNotes  = useRef<Note[]>([]);
   const timers     = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const repairTimers = useRef<number[]>([]);
   const loadedFor  = useRef<string | null | undefined>(undefined); // which userId we've loaded
   const guestHydratedFromCache = useRef(false);
   const latestNotes = useRef<Note[]>(notes);
@@ -128,6 +172,26 @@ export function useNoteSync(user: User | null, authLoading = false) {
   useEffect(() => {
     latestNotes.current = notes;
   }, [notes]);
+
+  const clearRepairQueue = () => {
+    repairTimers.current.forEach((timer) => clearTimeout(timer));
+    repairTimers.current = [];
+  };
+
+  const scheduleCloudRepair = (cachedNotes: Note[], userId: string) => {
+    clearRepairQueue();
+    cachedNotes.map(withCloudId).forEach((note, index) => {
+      const timer = window.setTimeout(async () => {
+        const error = await resilientUpsert(supabase, note, userId);
+        if (error) {
+          console.error("[useNoteSync] cache repair:", note.id, error.message);
+          return;
+        }
+        repairTimers.current = repairTimers.current.filter((t) => t !== timer);
+      }, 1200 + index * 350);
+      repairTimers.current.push(timer);
+    });
+  };
 
   // ── Load: fires when the logged-in user changes ───────────────────
   useEffect(() => {
@@ -137,8 +201,10 @@ export function useNoteSync(user: User | null, authLoading = false) {
     loadedFor.current = uid;
     setSyncReady(false);
     setDbError(null);
+    clearRepairQueue();
 
     if (user) {
+      const cachedForUser = readUserCache(user.id);
       // First, verify connection with a lightweight probe
       supabase
         .from("notes")
@@ -148,6 +214,12 @@ export function useNoteSync(user: User | null, authLoading = false) {
           if (probeErr) {
             setDbError(`DB connection error: ${probeErr.message}. Run the schema SQL in Supabase.`);
             console.error("[useNoteSync] probe failed:", probeErr);
+            if (cachedForUser.length > 0) {
+              useNotesStore.setState({ notes: cachedForUser, topZ: safeTopZ(cachedForUser) });
+              prevNotes.current = cachedForUser;
+              scheduleCloudRepair(cachedForUser, user.id);
+              setSyncReady(true);
+            }
             return;
           }
           // Full load
@@ -160,11 +232,25 @@ export function useNoteSync(user: User | null, authLoading = false) {
         .then((res) => {
           if (!res) return;
           const { data, error } = res;
-          if (error) { setDbError(`Load error: ${error.message}`); setSyncReady(true); return; }
+          if (error) {
+            setDbError(`Load error: ${error.message}`);
+            if (cachedForUser.length > 0) {
+              useNotesStore.setState({ notes: cachedForUser, topZ: safeTopZ(cachedForUser) });
+              prevNotes.current = cachedForUser;
+              scheduleCloudRepair(cachedForUser, user.id);
+            }
+            setSyncReady(true);
+            return;
+          }
           if (data) {
             const rows = data.map(fromRow);
-            useNotesStore.setState({ notes: rows, topZ: safeTopZ(rows) });
-            prevNotes.current = rows;
+            const chosen = rows.length === 0 && cachedForUser.length > 0 ? cachedForUser : rows;
+            useNotesStore.setState({ notes: chosen, topZ: safeTopZ(chosen) });
+            prevNotes.current = chosen;
+            writeUserCache(user.id, chosen);
+            if (rows.length === 0 && cachedForUser.length > 0) {
+              scheduleCloudRepair(cachedForUser, user.id);
+            }
           }
           setSyncReady(true);
           // Check for cached guest notes
@@ -205,8 +291,11 @@ export function useNoteSync(user: User | null, authLoading = false) {
       const cloudNotes = notes.map(withCloudId);
       useNotesStore.setState({ notes: cloudNotes });
       prevNotes.current = [];
+      try { writeUserCache(user.id, cloudNotes); } catch {}
       return;
     }
+
+    try { writeUserCache(user.id, notes); } catch { /* quota */ }
 
     // Detect deletions
     const prevIds = new Set(prevNotes.current.map((n) => n.id));
@@ -226,6 +315,7 @@ export function useNoteSync(user: User | null, authLoading = false) {
         p.x === note.x && p.y === note.y && p.w === note.w && p.h === note.h &&
         p.rotation === note.rotation && p.locked === note.locked &&
         p.color === note.color && p.zIndex === note.zIndex &&
+        (p.fontSize ?? 13) === (note.fontSize ?? 13) &&
         JSON.stringify(p.badges) === JSON.stringify(note.badges);
       if (unchanged) return;
 
@@ -263,6 +353,7 @@ export function useNoteSync(user: User | null, authLoading = false) {
         const merged = data.map(fromRow);
         useNotesStore.setState({ notes: merged, topZ: safeTopZ(merged) });
         prevNotes.current = merged;
+        writeUserCache(user.id, merged);
       }
     } catch (e) { console.error("[useNoteSync] merge:", e); }
     setShowMergePrompt(false);
@@ -271,9 +362,12 @@ export function useNoteSync(user: User | null, authLoading = false) {
   const discardLocal = () => { localStorage.removeItem(CACHE_KEY); setShowMergePrompt(false); };
 
   useEffect(() => {
-    if (user || authLoading) return;
+    if (authLoading) return;
     const flush = () => {
-      try { writeGuestCache(latestNotes.current); } catch {}
+      try {
+        if (user) writeUserCache(user.id, latestNotes.current);
+        else writeGuestCache(latestNotes.current);
+      } catch {}
     };
     window.addEventListener("beforeunload", flush);
     window.addEventListener("pagehide", flush);
@@ -282,6 +376,8 @@ export function useNoteSync(user: User | null, authLoading = false) {
       window.removeEventListener("pagehide", flush);
     };
   }, [authLoading, user]);
+
+  useEffect(() => () => clearRepairQueue(), []);
 
   return { showMergePrompt, cachedCount, mergeLocalToCloud, discardLocal, dbError };
 }

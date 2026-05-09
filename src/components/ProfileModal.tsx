@@ -116,6 +116,9 @@ export default function ProfileModal({ user, onClose }: Props) {
   const text    = theme.noteText;
   const muted   = isDark ? "rgba(240,234,216,0.58)" : "rgba(26,26,26,0.52)";
   const inp     = isDark ? "rgba(0,0,0,0.16)" : "rgba(255,255,255,0.26)";
+  const frosted = isDark ? "rgba(18,18,22,0.24)" : "rgba(255,255,255,0.40)";
+  const frostedStrong = isDark ? "rgba(18,18,22,0.34)" : "rgba(255,255,255,0.54)";
+  const frostedBorder = isDark ? "rgba(255,245,220,0.14)" : "rgba(0,0,0,0.12)";
 
   return (
     <div
@@ -139,7 +142,7 @@ export default function ProfileModal({ user, onClose }: Props) {
           backgroundSize: "100% 24.5px",
           borderRadius: 16,
           display: "flex",
-          overflow: "hidden",
+          overflow: "visible",
           transform: "rotate(-0.35deg)",
           boxShadow: isDark
             ? "0 42px 120px rgba(0,0,0,0.76)"
@@ -157,7 +160,8 @@ export default function ProfileModal({ user, onClose }: Props) {
           borderRadius: 3,
           background: isDark ? "rgba(255,250,200,0.24)" : "rgba(255,253,200,0.68)",
           boxShadow: "0 1px 4px rgba(0,0,0,0.12)",
-          zIndex: 2,
+          zIndex: 6,
+          pointerEvents: "none",
         }} />
         {/* ── Left: Profile card ── */}
         <div style={{
@@ -165,22 +169,11 @@ export default function ProfileModal({ user, onClose }: Props) {
           display: "flex", flexDirection: "column",
           background: glass2,
           borderRight: `1px solid ${bdr}`,
+          borderTopLeftRadius: 16,
+          borderBottomLeftRadius: 16,
           padding: "28px 20px 20px",
           gap: 4,
         }}>
-          {/* Close */}
-          <button
-            onClick={onClose}
-            style={{
-              alignSelf: "flex-end",
-              width: 26, height: 26, borderRadius: "50%",
-              background: isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.07)",
-              border: "none", color: muted, cursor: "pointer", fontSize: 16,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              marginBottom: 12, flexShrink: 0,
-            }}
-          >×</button>
-
           {/* Avatar */}
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
             <div style={{ position: "relative" }}>
@@ -264,7 +257,9 @@ export default function ProfileModal({ user, onClose }: Props) {
               <div key={label} style={{
                 display: "flex", justifyContent: "space-between", alignItems: "center",
                 padding: "8px 12px", borderRadius: 9,
-                background: inp, border: `1px solid ${bdr}`,
+                background: frosted, border: `1px solid ${frostedBorder}`,
+                backdropFilter: "blur(10px)",
+                WebkitBackdropFilter: "blur(10px)",
               }}>
                 <span style={{ fontSize: 12, color: muted }}>{label}</span>
                 <span style={{ fontSize: 13, fontWeight: 600, color: text }}>{value}</span>
@@ -276,8 +271,10 @@ export default function ProfileModal({ user, onClose }: Props) {
             marginTop: 8,
             padding: "9px 12px",
             borderRadius: 9,
-            background: inp,
-            border: `1px solid ${bdr}`,
+            background: frosted,
+            border: `1px solid ${frostedBorder}`,
+            backdropFilter: "blur(10px)",
+            WebkitBackdropFilter: "blur(10px)",
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
@@ -289,27 +286,21 @@ export default function ProfileModal({ user, onClose }: Props) {
               aria-pressed={coffeeVisible}
               title={coffeeVisible ? "Hide coffee button" : "Show coffee button"}
               style={{
-                width: 42,
-                height: 24,
-                borderRadius: 999,
-                border: `1px solid ${coffeeVisible ? theme.accent : bdr}`,
-                background: coffeeVisible ? theme.accent : inp,
-                padding: 2,
+                width: 34,
+                height: 30,
+                borderRadius: 10,
+                border: `1px solid ${coffeeVisible ? theme.accent : frostedBorder}`,
+                background: coffeeVisible ? `${theme.accent}26` : frosted,
                 cursor: "pointer",
                 display: "flex",
                 alignItems: "center",
-                justifyContent: coffeeVisible ? "flex-end" : "flex-start",
-                transition: "background 160ms, border-color 160ms",
+                justifyContent: "center",
+                color: coffeeVisible ? theme.accent : muted,
+                transition: "background 160ms, border-color 160ms, transform 160ms",
                 flexShrink: 0,
               }}
             >
-              <span style={{
-                width: 18,
-                height: 18,
-                borderRadius: "50%",
-                background: "#fff",
-                boxShadow: "0 1px 4px rgba(0,0,0,0.22)",
-              }} />
+              {coffeeVisible ? <HandCheckIcon /> : <HandCrossIcon />}
             </button>
           </div>
 
@@ -345,7 +336,7 @@ export default function ProfileModal({ user, onClose }: Props) {
         </div>
 
         {/* ── Right: Notes list ── */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", borderTopRightRadius: 16, borderBottomRightRadius: 16 }}>
           {/* Search bar */}
           <div style={{ padding: "24px 24px 14px", flexShrink: 0 }}>
             <div style={{ fontSize: 15, fontWeight: 700, color: text, marginBottom: 12 }}>
@@ -363,8 +354,10 @@ export default function ProfileModal({ user, onClose }: Props) {
                   placeholder="Search notes..."
                   style={{
                     width: "100%", padding: "8px 10px 8px 30px",
-                    borderRadius: 10, background: inp,
-                    border: `1px solid ${bdr}`,
+                    borderRadius: 10, background: frosted,
+                    border: `1px solid ${frostedBorder}`,
+                    backdropFilter: "blur(10px)",
+                    WebkitBackdropFilter: "blur(10px)",
                     color: text, fontSize: 13, fontFamily: "inherit", outline: "none",
                     boxSizing: "border-box",
                   }}
@@ -375,8 +368,10 @@ export default function ProfileModal({ user, onClose }: Props) {
                 title="Filter"
                 style={{
                   width: 34, height: 34, borderRadius: 10,
-                  background: badgeFilter ? `${theme.accent}22` : inp,
-                  border: `1px solid ${badgeFilter ? theme.accent : bdr}`,
+                  background: badgeFilter ? `${theme.accent}22` : frosted,
+                  border: `1px solid ${badgeFilter ? theme.accent : frostedBorder}`,
+                  backdropFilter: "blur(10px)",
+                  WebkitBackdropFilter: "blur(10px)",
                   color: text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
                 }}
               >
@@ -384,7 +379,7 @@ export default function ProfileModal({ user, onClose }: Props) {
               </button>
             </div>
             {filterOpen && (
-              <div style={{ marginTop: 8, padding: 9, borderRadius: 10, background: inp, border: `1px solid ${bdr}` }}>
+              <div style={{ marginTop: 8, padding: 9, borderRadius: 10, background: frosted, border: `1px solid ${frostedBorder}`, backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 7 }}>
                   <span style={{ fontSize: 11, fontWeight: 700, color: text }}>Filter by badge</span>
                   {badgeFilter && <button onClick={() => setBadgeFilter(null)} style={{ background: "transparent", border: "none", color: muted, fontSize: 11, cursor: "pointer" }}>Clear</button>}
@@ -428,18 +423,21 @@ export default function ProfileModal({ user, onClose }: Props) {
                   key={n.id}
                   style={{
                     display: "flex", alignItems: "center", gap: 12,
-                    padding: "9px 12px", borderRadius: 10, marginBottom: 3,
-                    background: "transparent", cursor: "pointer",
-                    transition: "background 100ms",
-                    border: `1px solid transparent`,
+                    padding: "9px 12px", borderRadius: 10, marginBottom: 8,
+                    background: frosted, cursor: "pointer",
+                    transition: "background 100ms, border-color 100ms, box-shadow 100ms",
+                    border: `1px solid ${frostedBorder}`,
+                    backdropFilter: "blur(10px)",
+                    WebkitBackdropFilter: "blur(10px)",
+                    boxShadow: isDark ? "0 4px 14px rgba(0,0,0,0.10)" : "0 4px 14px rgba(0,0,0,0.05)",
                   }}
                   onMouseEnter={(e) => {
-                    (e.currentTarget as HTMLElement).style.background = glass2;
-                    (e.currentTarget as HTMLElement).style.borderColor = bdr;
+                    (e.currentTarget as HTMLElement).style.background = frostedStrong;
+                    (e.currentTarget as HTMLElement).style.borderColor = `${theme.accent}88`;
                   }}
                   onMouseLeave={(e) => {
-                    (e.currentTarget as HTMLElement).style.background = "transparent";
-                    (e.currentTarget as HTMLElement).style.borderColor = "transparent";
+                    (e.currentTarget as HTMLElement).style.background = frosted;
+                    (e.currentTarget as HTMLElement).style.borderColor = frostedBorder;
                   }}
                   onClick={() => navigateToNote(n)}
                   title="Click to navigate to this note"
@@ -478,5 +476,45 @@ export default function ProfileModal({ user, onClose }: Props) {
         }
       `}</style>
     </div>
+  );
+}
+
+function HandCheckIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+      <path
+        d="M3.6 9.4c1.2 1.1 2.4 2.5 3.4 3.4 1.7-2.9 4.2-5.7 7.3-8.1"
+        stroke="currentColor"
+        strokeWidth="2.1"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M4.2 9.1c1.1 1 2 2.1 2.8 2.8"
+        stroke="currentColor"
+        strokeWidth="0.8"
+        strokeLinecap="round"
+        opacity="0.55"
+      />
+    </svg>
+  );
+}
+
+function HandCrossIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+      <path
+        d="M4.4 4.8c2.8 2.5 5.6 5.5 8.9 8.3"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M13.1 4.5c-2.4 2.8-5.6 5.5-8.4 8.8"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
   );
 }

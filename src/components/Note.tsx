@@ -39,8 +39,8 @@ function lineContinuation(line: string): string | null {
 
 interface Props { note: NoteType; gridUnit: number; }
 
-const MIN_NOTE_FONT = 11;
-const MAX_NOTE_FONT = 22;
+const MIN_NOTE_FONT = 10;
+const MAX_NOTE_FONT = 40;
 
 function clampNoteFontSize(size: number) {
   return Math.min(MAX_NOTE_FONT, Math.max(MIN_NOTE_FONT, size));
@@ -257,6 +257,7 @@ export default function Note({ note, gridUnit: G }: Props) {
   const phColor   = theme.notePlaceholder;
   const lineColor = isDark ? "rgba(0,0,0,0.18)" : "rgba(0,0,0,0.07)";
   const bodyFontSize = note.fontSize ?? 13;
+  const titleFontSize = Math.min(44, bodyFontSize + 3);
   const lineStep = Math.max(20.5, bodyFontSize * 1.58);
   const adjustFontSize = (delta: number) => {
     updateNote(note.id, { fontSize: clampNoteFontSize(bodyFontSize + delta) });
@@ -363,7 +364,7 @@ export default function Note({ note, gridUnit: G }: Props) {
                 if (e.key === "Tab") { e.preventDefault(); setEditFocus("body"); bodyRef.current?.focus(); }
                 if (e.key === "Escape") exitEdit();
               }}
-              style={{ background: "transparent", border: "none", outline: "none", fontWeight: 800, fontSize: 16, color: textColor, fontFamily: "inherit", width: "100%", padding: 0, marginBottom: 6, cursor: "text" }}
+              style={{ background: "transparent", border: "none", outline: "none", fontWeight: 800, fontSize: titleFontSize, color: textColor, fontFamily: "inherit", width: "100%", padding: 0, marginBottom: 6, cursor: "text" }}
             />
             <div style={{ width: "100%", height: 1.5, background: `${textColor}36`, marginBottom: 8, flexShrink: 0 }} />
             <textarea
@@ -388,7 +389,7 @@ export default function Note({ note, gridUnit: G }: Props) {
         ) : (
           <div style={{ height: visualH - 34, display: "flex", flexDirection: "column", overflow: "hidden" }}>
             {/* Title */}
-            <div className="note-title-clickable" onClick={() => enterEdit("title")} style={{ padding: "8px 11px 5px", fontWeight: 800, fontSize: 16, color: textColor, flexShrink: 0, cursor: "text" }}>
+            <div className="note-title-clickable" onClick={() => enterEdit("title")} style={{ padding: "8px 11px 5px", fontWeight: 800, fontSize: titleFontSize, color: textColor, flexShrink: 0, cursor: "text" }}>
               <div className="note-rendered-text" style={{ overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
                 {note.title || <span style={{ color: phColor, fontWeight: 500 }}>Title</span>}
               </div>

@@ -23,8 +23,8 @@ const INIT_W = 860;
 const INIT_H = 580;
 const MIN_W  = 400;
 const MIN_H  = 260;
-const MIN_NOTE_FONT = 11;
-const MAX_NOTE_FONT = 22;
+const MIN_NOTE_FONT = 10;
+const MAX_NOTE_FONT = 40;
 
 function clampNoteFontSize(size: number) {
   return Math.min(MAX_NOTE_FONT, Math.max(MIN_NOTE_FONT, size));
@@ -147,6 +147,7 @@ export default function NoteFullscreen({ note, theme, originX, originY, originW,
   const lineColor = isDark ? "rgba(0,0,0,0.18)" : "rgba(0,0,0,0.07)";
   const bodyFontSize = note.fontSize ?? 13;
   const fullscreenFontSize = bodyFontSize + 2;
+  const fullscreenTitleFontSize = Math.min(48, bodyFontSize + 7);
   const lineStep = Math.max(28.5, fullscreenFontSize * 1.9);
   const adjustFontSize = (delta: number) => {
     updateNote(note.id, { fontSize: clampNoteFontSize(bodyFontSize + delta) });
@@ -237,12 +238,12 @@ export default function NoteFullscreen({ note, theme, originX, originY, originW,
                 if (e.key === "Tab") { e.preventDefault(); bodyRef.current?.focus(); }
                 if (e.key === "Escape") exitEdit();
               }}
-              style={{ flex: 1, background: "transparent", border: "none", outline: "none", fontSize: 20, fontWeight: 800, color: textColor, fontFamily: "inherit" }}
+              style={{ flex: 1, background: "transparent", border: "none", outline: "none", fontSize: fullscreenTitleFontSize, fontWeight: 800, color: textColor, fontFamily: "inherit" }}
             />
           ) : (
             <span
               onClick={() => enterEdit("title")}
-              style={{ flex: 1, fontSize: 20, fontWeight: 800, color: textColor, opacity: 0.84, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis", cursor: "text" }}
+              style={{ flex: 1, fontSize: fullscreenTitleFontSize, fontWeight: 800, color: textColor, opacity: 0.84, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis", cursor: "text" }}
             >
               {note.title || <span style={{ opacity: 0.4 }}>Untitled</span>}
             </span>
