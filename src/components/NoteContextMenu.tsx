@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useTheme } from "@/hooks/useTheme";
 import { DEFAULT_BADGES } from "@/lib/badges";
 import { useNotesStore } from "@/store/notes";
@@ -16,6 +16,15 @@ export default function NoteContextMenu({ x, y, noteId, noteBadges, onEdit, onDe
   const isDark = theme.isDark;
   const { toggleNoteBadge, customBadges } = useNotesStore();
   const [badgesOpen, setBadgesOpen]       = useState(false);
+  const badgesTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const openBadges = () => {
+    if (badgesTimer.current) clearTimeout(badgesTimer.current);
+    setBadgesOpen(true);
+  };
+  const closeBadges = () => {
+    badgesTimer.current = setTimeout(() => setBadgesOpen(false), 250);
+  };
 
   // Clamp so menu never clips viewport
   const menuW = 192;
@@ -74,8 +83,8 @@ export default function NoteContextMenu({ x, y, noteId, noteBadges, onEdit, onDe
         {/* Add badge — click to open, hover the row also opens */}
         <div
           style={{ position: "relative" }}
-          onMouseEnter={() => setBadgesOpen(true)}
-          onMouseLeave={() => setBadgesOpen(false)}
+          onMouseEnter={openBadges}
+          onMouseLeave={closeBadges}
         >
           <Item
             label="Add badge"
@@ -104,8 +113,8 @@ export default function NoteContextMenu({ x, y, noteId, noteBadges, onEdit, onDe
                 width: 136, zIndex: 599,
                 animation: "ctxPop 80ms cubic-bezier(0.2,0,0,1.2)",
               }}
-              onMouseEnter={() => setBadgesOpen(true)}
-              onMouseLeave={() => setBadgesOpen(false)}
+              onMouseEnter={openBadges}
+              onMouseLeave={closeBadges}
             >
               {allBadges.length === 0 && (
                 <div style={{ color: muted, fontSize: 12, padding: "4px 2px" }}>No badges yet</div>

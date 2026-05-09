@@ -239,7 +239,12 @@ export default function NoteFullscreen({ note, theme, originX, originY, onClose 
               }}
             />
           ) : (
-            <div style={{ padding: "20px 28px", flex: 1, cursor: "text" }} onClick={() => enterEdit("body")}>
+            <div style={{ 
+              padding: "20px 28px", flex: 1, cursor: "text",
+              backgroundImage: `repeating-linear-gradient(transparent, transparent 27px, ${lineColor} 27px, ${lineColor} 28.5px)`,
+              backgroundSize: "100% 28.5px",
+              backgroundPosition: "0 20px",
+            }} onClick={() => enterEdit("body")}>
               {note.body ? (
                 <FSBodyRenderer lines={note.body.split("\n")} textColor={textColor} onToggle={toggleTodo} />
               ) : (

@@ -16,6 +16,30 @@ export default function Canvas() {
   panRef.current = { x: canvas.panX, y: canvas.panY };
   const [cursor, setCursor] = useState<"default" | "grabbing">("default");
 
+  // Load initial pan position
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("canvas-pan");
+      if (saved) {
+        const { panX, panY } = JSON.parse(saved);
+        if (typeof panX === "number" && typeof panY === "number") {
+          setPan(panX, panY);
+        }
+      }
+    } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Save pan position when it changes (debounced)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem("canvas-pan", JSON.stringify(canvas));
+      } catch {}
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [canvas]);
+
   // Non-passive wheel to preventDefault and pan
   useEffect(() => {
     const el = surfaceRef.current;
