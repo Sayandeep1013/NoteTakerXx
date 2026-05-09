@@ -14,6 +14,8 @@ interface Props {
   theme: ThemeConfig;
   originX: number;
   originY: number;
+  originW: number;
+  originH: number;
   onClose: () => void;
 }
 
@@ -21,6 +23,12 @@ const INIT_W = 860;
 const INIT_H = 580;
 const MIN_W  = 400;
 const MIN_H  = 260;
+const MIN_NOTE_FONT = 11;
+const MAX_NOTE_FONT = 22;
+
+function clampNoteFontSize(size: number) {
+  return Math.min(MAX_NOTE_FONT, Math.max(MIN_NOTE_FONT, size));
+}
 
 // ── Line detection (same rules as Note.tsx) ──────────────────────
 type LineType = "bullet" | "todo-open" | "todo-done" | "numbered" | "plain";
@@ -40,7 +48,7 @@ function lineContinuation(line: string): string | null {
   return null;
 }
 
-export default function NoteFullscreen({ note, theme, originX, originY, onClose }: Props) {
+export default function NoteFullscreen({ note, theme, originX, originY, originW, originH, onClose }: Props) {
   const { updateNote } = useNotesStore();
   const [phase, setPhase]       = useState<Phase>("entering");
   const [dims, setDims]         = useState({ w: INIT_W, h: INIT_H });
@@ -53,11 +61,19 @@ export default function NoteFullscreen({ note, theme, originX, originY, onClose 
 
   const vCX = typeof window !== "undefined" ? window.innerWidth  / 2 : 0;
   const vCY = typeof window !== "undefined" ? window.innerHeight / 2 : 0;
-  const dx  = originX - vCX;
-  const dy  = originY - vCY;
-
-  const enterTx  = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px)) scale(0.08)`;
-  const visibleTx = `translate(-50%, -50%) scale(1)`;
+  const startRect = {
+    left: originX - originW / 2,
+    top: originY - originH / 2,
+    w: originW,
+    h: originH,
+  };
+  const targetRect = {
+    left: vCX - dims.w / 2,
+    top: vCY - dims.h / 2,
+    w: dims.w,
+    h: dims.h,
+  };
+  const rect = phase === "visible" ? targetRect : startRect;
 
   useEffect(() => {
     const id = requestAnimationFrame(() => requestAnimationFrame(() => setPhase("visible")));
@@ -129,6 +145,12 @@ export default function NoteFullscreen({ note, theme, originX, originY, onClose 
   const phColor   = theme.notePlaceholder;
   const isDark    = theme.isDark;
   const lineColor = isDark ? "rgba(0,0,0,0.18)" : "rgba(0,0,0,0.07)";
+  const bodyFontSize = note.fontSize ?? 13;
+  const fullscreenFontSize = bodyFontSize + 2;
+  const lineStep = Math.max(28.5, fullscreenFontSize * 1.9);
+  const adjustFontSize = (delta: number) => {
+    updateNote(note.id, { fontSize: clampNoteFontSize(bodyFontSize + delta) });
+  };
 
   return (
     <div
@@ -137,7 +159,7 @@ export default function NoteFullscreen({ note, theme, originX, originY, onClose 
         position: "fixed", inset: 0,
         background: isDark ? "rgba(0,0,0,0.65)" : "rgba(0,0,0,0.42)",
         backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)",
-        zIndex: 200,
+        zIndex: 800,
         opacity: phase === "visible" ? 1 : 0,
         transition: "opacity 300ms ease",
         pointerEvents: phase === "exiting" ? "none" : "auto",
@@ -146,19 +168,36 @@ export default function NoteFullscreen({ note, theme, originX, originY, onClose 
       <div
         onClick={(e) => e.stopPropagation()}
         onTransitionEnd={onTransitionEnd}
+        className="sticky-note-font"
         style={{
-          position: "fixed", left: "50%", top: "50%",
-          width: dims.w, height: dims.h,
+          position: "fixed",
+          left: rect.left,
+          top: rect.top,
+          width: rect.w,
+          height: rect.h,
           background: bg, borderRadius: 16,
-          display: "flex", flexDirection: "column", overflow: "hidden",
-          transform: phase === "visible" ? visibleTx : enterTx,
+          display: "flex", flexDirection: "column", overflow: "visible",
           opacity: phase === "visible" ? 1 : 0,
-          transition: "transform 360ms cubic-bezier(0.34,1.56,0.64,1), opacity 300ms ease",
-          zIndex: 210,
+          transition: "left 320ms cubic-bezier(0.22,1,0.36,1), top 320ms cubic-bezier(0.22,1,0.36,1), width 320ms cubic-bezier(0.22,1,0.36,1), height 320ms cubic-bezier(0.22,1,0.36,1), opacity 240ms ease",
+          zIndex: 810,
           boxShadow: "0 32px 80px rgba(0,0,0,0.28)",
-          minWidth: MIN_W, minHeight: MIN_H,
         }}
       >
+        <div
+          style={{
+            position: "absolute",
+            top: -11,
+            left: "50%",
+            transform: "translateX(-50%) rotate(-1.5deg)",
+            width: 68,
+            height: 22,
+            background: isDark ? "rgba(255,250,200,0.24)" : "rgba(255,253,200,0.68)",
+            borderRadius: 3,
+            boxShadow: "0 1px 4px rgba(0,0,0,0.12)",
+            pointerEvents: "none",
+            zIndex: 4,
+          }}
+        />
         {/* Noise overlay */}
         <div style={{ position: "absolute", inset: 0, borderRadius: 16, opacity: 0.07, filter: "url(#paper-noise)", pointerEvents: "none", mixBlendMode: "multiply", background: "transparent" }} />
 
@@ -217,6 +256,8 @@ export default function NoteFullscreen({ note, theme, originX, originY, onClose 
           >
             {isEditing ? "editing" : "Edit"}
           </button>
+          <FontSizeButton label="-" title="Decrease text size" onClick={() => adjustFontSize(-1)} disabled={bodyFontSize <= MIN_NOTE_FONT} textColor={textColor} />
+          <FontSizeButton label="+" title="Increase text size" onClick={() => adjustFontSize(1)} disabled={bodyFontSize >= MAX_NOTE_FONT} textColor={textColor} />
         </div>
 
         {/* Content */}
@@ -232,23 +273,23 @@ export default function NoteFullscreen({ note, theme, originX, originY, onClose 
               style={{
                 flex: 1, padding: "20px 28px",
                 background: "transparent", border: "none", outline: "none", resize: "none",
-                fontSize: 15, color: textColor, fontFamily: "inherit", lineHeight: "1.75",
-                backgroundImage: `repeating-linear-gradient(transparent, transparent 27px, ${lineColor} 27px, ${lineColor} 28.5px)`,
-                backgroundSize: "100% 28.5px",
+                fontSize: fullscreenFontSize, color: textColor, fontFamily: "inherit", lineHeight: "1.75",
+                backgroundImage: `repeating-linear-gradient(transparent, transparent ${lineStep - 1.5}px, ${lineColor} ${lineStep - 1.5}px, ${lineColor} ${lineStep}px)`,
+                backgroundSize: `100% ${lineStep}px`,
                 backgroundPosition: "0 20px",
               }}
             />
           ) : (
             <div style={{ 
               padding: "20px 28px", flex: 1, cursor: "text",
-              backgroundImage: `repeating-linear-gradient(transparent, transparent 27px, ${lineColor} 27px, ${lineColor} 28.5px)`,
-              backgroundSize: "100% 28.5px",
+              backgroundImage: `repeating-linear-gradient(transparent, transparent ${lineStep - 1.5}px, ${lineColor} ${lineStep - 1.5}px, ${lineColor} ${lineStep}px)`,
+              backgroundSize: `100% ${lineStep}px`,
               backgroundPosition: "0 20px",
             }} onClick={() => enterEdit("body")}>
               {note.body ? (
-                <FSBodyRenderer lines={note.body.split("\n")} textColor={textColor} onToggle={toggleTodo} />
+                <FSBodyRenderer lines={note.body.split("\n")} textColor={textColor} onToggle={toggleTodo} fontSize={fullscreenFontSize} />
               ) : (
-                <span style={{ color: phColor, fontSize: 15 }}>Click to write...</span>
+                <span style={{ color: phColor, fontSize: fullscreenFontSize }}>Click to write...</span>
               )}
             </div>
           )}
@@ -265,9 +306,9 @@ export default function NoteFullscreen({ note, theme, originX, originY, onClose 
 
 // ── Fullscreen body renderer ──────────────────────────────────────
 
-function FSBodyRenderer({ lines, textColor, onToggle }: { lines: string[]; textColor: string; onToggle: (i: number) => void }) {
+function FSBodyRenderer({ lines, textColor, onToggle, fontSize }: { lines: string[]; textColor: string; onToggle: (i: number) => void; fontSize: number }) {
   return (
-    <div style={{ fontSize: 15, lineHeight: "1.75" }}>
+    <div className="note-rendered-text" style={{ fontSize, lineHeight: "1.75" }}>
       {lines.map((line, i) => {
         const { type, content, num } = detectLine(line);
         if (type === "bullet") return (
@@ -303,6 +344,37 @@ function FSBodyRenderer({ lines, textColor, onToggle }: { lines: string[]; textC
 }
 
 // ── Fullscreen resize handle ──────────────────────────────────────
+
+function FontSizeButton({ label, title, onClick, disabled, textColor }: { label: string; title: string; onClick: () => void; disabled: boolean; textColor: string }) {
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); if (!disabled) onClick(); }}
+      title={title}
+      disabled={disabled}
+      style={{
+        width: 24,
+        height: 24,
+        borderRadius: "50%",
+        border: "none",
+        background: "rgba(0,0,0,0.08)",
+        color: textColor,
+        cursor: disabled ? "default" : "pointer",
+        opacity: disabled ? 0.3 : 0.72,
+        padding: 0,
+        flexShrink: 0,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: 16,
+        fontWeight: 900,
+        lineHeight: "24px",
+        fontFamily: "var(--font-geist-sans), system-ui, sans-serif",
+      }}
+    >
+      {label}
+    </button>
+  );
+}
 
 function FSResizeHandle({ dir, dims, onUpdate }: { dir: ResizeDir; dims: { w: number; h: number }; onUpdate: (d: { w: number; h: number }) => void }) {
   const start = useRef({ w: 0, h: 0 });

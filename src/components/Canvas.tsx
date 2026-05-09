@@ -1,20 +1,26 @@
 "use client";
 
 import { useRef, useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { useNotesStore } from "@/store/notes";
 import Note from "./Note";
 import DotGrid from "./DotGrid";
 import Sidebar from "./Sidebar";
 import ResourceMonitor from "./ResourceMonitor";
 import ConnectionLayer from "./ConnectionLayer";
+import UniversalSearch from "./UniversalSearch";
+import { useHudScale } from "@/hooks/useHudScale";
+
+const SHOW_COFFEE_BUTTON = false;
 
 export default function Canvas() {
-  const { notes, canvas, setPan, addNote, connectionMode, setConnectionMode, badgeFilter } = useNotesStore();
+  const { notes, canvas, setPan, addNote, connectionMode, setConnectionMode, badgeFilter, coffeeVisible, setCoffeeVisible } = useNotesStore();
   const surfaceRef = useRef<HTMLDivElement>(null);
   const panState = useRef({ active: false, startX: 0, startY: 0, panX: 0, panY: 0 });
   const panRef = useRef({ x: canvas.panX, y: canvas.panY });
   panRef.current = { x: canvas.panX, y: canvas.panY };
   const [cursor, setCursor] = useState<"default" | "grabbing">("default");
+  const hudScale = useHudScale();
 
   // Load initial pan position
   useEffect(() => {
@@ -124,9 +130,16 @@ export default function Canvas() {
         background: "radial-gradient(ellipse at 50% 50%, transparent 55%, rgba(0,0,0,0.07) 100%)",
       }} />
 
-      {/* + button with pulse ring */}
-      <div style={{ position: "fixed", bottom: 32, right: 32, zIndex: 500 }}>
-        {/* Pulse ring */}
+      <div
+        style={{
+          position: "fixed",
+          bottom: 32,
+          right: 32,
+          zIndex: 510,
+          transform: `scale(${hudScale})`,
+          transformOrigin: "bottom right",
+        }}
+      >
         <div style={{
           position: "absolute", inset: 0, borderRadius: "50%",
           background: "var(--accent)",
@@ -141,10 +154,9 @@ export default function Canvas() {
             width: 52, height: 52, borderRadius: "50%",
             background: "var(--accent)",
             border: "none",
-            color: "#fff", fontSize: 26,
+            color: "#fff",
             cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
             transition: "transform 150ms, box-shadow 150ms",
-            fontWeight: 300,
             boxShadow: "0 4px 20px rgba(92,107,192,0.45)",
           }}
           onMouseEnter={(e) => {
@@ -158,9 +170,13 @@ export default function Canvas() {
             b.style.boxShadow = "0 4px 20px rgba(92,107,192,0.45)";
           }}
         >
-          +
+          <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
+            <path d="M11 4.5v13M4.5 11h13" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
+          </svg>
         </button>
       </div>
+
+      {SHOW_COFFEE_BUTTON && coffeeVisible && <CoffeeButton onHide={() => setCoffeeVisible(false)} />}
 
       {/* Connection mode indicator */}
       {connectionMode && (
@@ -182,7 +198,146 @@ export default function Canvas() {
       )}
 
       <Sidebar />
+      <UniversalSearch />
       <ResourceMonitor />
     </div>
+  );
+}
+
+function CoffeeButton({ onHide }: { onHide: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [qrMissing, setQrMissing] = useState(false);
+
+  return (
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        title="Buy me a coffee"
+        style={{
+          position: "fixed",
+          right: 96,
+          bottom: 38,
+          zIndex: 500,
+          height: 40,
+          padding: "0 16px",
+          borderRadius: 999,
+          border: "1px solid rgba(255,255,255,0.18)",
+          background: "rgba(18,18,22,0.78)",
+          backdropFilter: "blur(18px)",
+          WebkitBackdropFilter: "blur(18px)",
+          color: "#fff",
+          fontSize: 13,
+          fontWeight: 700,
+          fontFamily: "inherit",
+          cursor: "pointer",
+          boxShadow: "0 8px 28px rgba(0,0,0,0.22)",
+          transition: "transform 150ms, box-shadow 150ms",
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.transform = "translateY(-1px)";
+          e.currentTarget.style.boxShadow = "0 10px 34px rgba(0,0,0,0.28)";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.transform = "translateY(0)";
+          e.currentTarget.style.boxShadow = "0 8px 28px rgba(0,0,0,0.22)";
+        }}
+      >
+        Buy me a coffee
+      </button>
+
+      {open && createPortal(
+        <div
+          onClick={() => setOpen(false)}
+          style={{
+            position: "fixed", inset: 0,
+            zIndex: 700,
+            background: "rgba(0,0,0,0.48)",
+            backdropFilter: "blur(8px)",
+            WebkitBackdropFilter: "blur(8px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "min(340px, 92vw)",
+              borderRadius: 18,
+              padding: 22,
+              background: "rgba(250,250,255,0.96)",
+              border: "1px solid rgba(0,0,0,0.08)",
+              boxShadow: "0 32px 90px rgba(0,0,0,0.28)",
+              animation: "coffeeIn 220ms cubic-bezier(0.34,1.4,0.64,1)",
+              textAlign: "center",
+            }}
+          >
+            <button
+              onClick={() => setOpen(false)}
+              style={{
+                float: "right",
+                width: 26, height: 26, borderRadius: "50%",
+                border: "none", background: "rgba(0,0,0,0.06)",
+                cursor: "pointer", color: "rgba(0,0,0,0.5)",
+                fontSize: 16, lineHeight: "26px",
+              }}
+            >
+              x
+            </button>
+            <div style={{ clear: "both" }} />
+            <h2 style={{ margin: "0 0 16px", fontSize: 20, color: "#161616" }}>Buy me a coffee</h2>
+            <div style={{
+              width: 220,
+              height: 220,
+              margin: "0 auto 18px",
+              borderRadius: 14,
+              background: "rgba(0,0,0,0.045)",
+              border: "1px solid rgba(0,0,0,0.08)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              overflow: "hidden",
+            }}>
+              {qrMissing ? (
+                <div style={{ padding: 18, fontSize: 12, lineHeight: 1.45, color: "rgba(0,0,0,0.48)" }}>
+                  Add your UPI QR image as <strong>public/upi-qr.png</strong>
+                </div>
+              ) : (
+                <img
+                  src="/upi-qr.png"
+                  alt="UPI QR code"
+                  onError={() => setQrMissing(true)}
+                  style={{ width: "100%", height: "100%", objectFit: "contain", background: "#fff" }}
+                />
+              )}
+            </div>
+            <button
+              onClick={() => { onHide(); setOpen(false); }}
+              style={{
+                width: "100%",
+                height: 38,
+                borderRadius: 10,
+                border: "1px solid rgba(0,0,0,0.10)",
+                background: "rgba(0,0,0,0.045)",
+                color: "#242424",
+                cursor: "pointer",
+                fontSize: 13,
+                fontWeight: 700,
+                fontFamily: "inherit",
+              }}
+            >
+              Hide it
+            </button>
+          </div>
+          <style>{`
+            @keyframes coffeeIn {
+              from { opacity: 0; transform: scale(0.95) translateY(8px); }
+              to { opacity: 1; transform: scale(1) translateY(0); }
+            }
+          `}</style>
+        </div>,
+        document.body
+      )}
+    </>
   );
 }

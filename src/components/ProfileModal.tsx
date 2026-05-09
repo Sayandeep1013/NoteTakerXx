@@ -7,6 +7,7 @@ import { useTheme } from "@/hooks/useTheme";
 import { useAuth } from "@/hooks/useAuth";
 import { useNotesStore } from "@/store/notes";
 import { DEFAULT_BADGES } from "@/lib/badges";
+import { NOTE_COLOR_KEYS, type NoteColor } from "@/lib/colors";
 
 interface Props { user: User; onClose: () => void; }
 
@@ -26,7 +27,11 @@ export default function ProfileModal({ user, onClose }: Props) {
   const { signOut } = useAuth();
   const notes  = useNotesStore((s) => s.notes);
   const setPan = useNotesStore((s) => s.setPan);
+  const bringToFront = useNotesStore((s) => s.bringToFront);
+  const setHighlightedNoteId = useNotesStore((s) => s.setHighlightedNoteId);
   const customBadges = useNotesStore((s) => s.customBadges);
+  const coffeeVisible = useNotesStore((s) => s.coffeeVisible);
+  const setCoffeeVisible = useNotesStore((s) => s.setCoffeeVisible);
   const G = 80;
 
   const [username, setUsername]   = useState("");
@@ -37,6 +42,7 @@ export default function ProfileModal({ user, onClose }: Props) {
   const [badgeFilter, setBadgeFilter] = useState<string | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
   const [editingName, setEditingName] = useState(false);
+  const [paperColor] = useState<NoteColor>(() => NOTE_COLOR_KEYS[Math.floor(Math.random() * NOTE_COLOR_KEYS.length)]);
   const fileRef = useRef<HTMLInputElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
 
@@ -80,6 +86,8 @@ export default function ProfileModal({ user, onClose }: Props) {
     const cx = n.x * G + n.w * G / 2;
     const cy = n.y * G + n.h * G / 2;
     setPan(vw / 2 - cx, vh / 2 - cy);
+    bringToFront(n.id);
+    setHighlightedNoteId(n.id);
     onClose();
   };
 
@@ -101,21 +109,22 @@ export default function ProfileModal({ user, onClose }: Props) {
   ];
 
   // Theme tokens
-  const glass   = isDark ? "rgba(18,16,28,0.95)"  : "rgba(250,250,255,0.95)";
-  const glass2  = isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.025)";
-  const bdr     = isDark ? "rgba(255,255,255,0.09)" : "rgba(0,0,0,0.07)";
-  const text    = isDark ? "#ede5f5" : "#111";
-  const muted   = isDark ? "rgba(237,229,245,0.38)" : "rgba(17,17,17,0.36)";
-  const inp     = isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.04)";
+  const paper = theme.noteColors[paperColor] ?? theme.noteColors.yellow;
+  const line = isDark ? "rgba(0,0,0,0.20)" : "rgba(0,0,0,0.085)";
+  const glass2  = isDark ? "rgba(0,0,0,0.12)" : "rgba(255,255,255,0.22)";
+  const bdr     = isDark ? "rgba(0,0,0,0.22)" : "rgba(0,0,0,0.10)";
+  const text    = theme.noteText;
+  const muted   = isDark ? "rgba(240,234,216,0.58)" : "rgba(26,26,26,0.52)";
+  const inp     = isDark ? "rgba(0,0,0,0.16)" : "rgba(255,255,255,0.26)";
 
   return (
     <div
       onClick={onClose}
       style={{
         position: "fixed", inset: 0,
-        background: isDark ? "rgba(0,0,0,0.7)" : "rgba(10,10,20,0.42)",
-        backdropFilter: "blur(12px)",
-        WebkitBackdropFilter: "blur(12px)",
+        background: isDark ? "rgba(0,0,0,0.62)" : "rgba(20,18,24,0.34)",
+        backdropFilter: "blur(8px)",
+        WebkitBackdropFilter: "blur(8px)",
         zIndex: 400,
         display: "flex", alignItems: "center", justifyContent: "center",
       }}
@@ -124,19 +133,32 @@ export default function ProfileModal({ user, onClose }: Props) {
         onClick={(e) => e.stopPropagation()}
         style={{
           width: "min(860px, 94vw)", height: "min(660px, 92vh)",
-          background: glass,
-          backdropFilter: "blur(30px) saturate(140%)",
-          WebkitBackdropFilter: "blur(30px) saturate(140%)",
-          border: `1px solid ${bdr}`,
-          borderRadius: 20,
+          position: "relative",
+          background: paper,
+          backgroundImage: `repeating-linear-gradient(transparent, transparent 23px, ${line} 23px, ${line} 24.5px)`,
+          backgroundSize: "100% 24.5px",
+          borderRadius: 16,
           display: "flex",
           overflow: "hidden",
+          transform: "rotate(-0.35deg)",
           boxShadow: isDark
-            ? "0 48px 120px rgba(0,0,0,0.75), 0 0 0 0.5px rgba(255,255,255,0.07)"
-            : "0 48px 100px rgba(0,0,0,0.22), 0 0 0 0.5px rgba(0,0,0,0.05)",
+            ? "0 42px 120px rgba(0,0,0,0.76)"
+            : "0 42px 100px rgba(0,0,0,0.25)",
           animation: "pmIn 220ms cubic-bezier(0.34,1.4,0.64,1)",
         }}
       >
+        <div style={{
+          position: "absolute",
+          top: -10,
+          left: "50%",
+          transform: "translateX(-50%)",
+          width: 68,
+          height: 22,
+          borderRadius: 3,
+          background: isDark ? "rgba(255,250,200,0.24)" : "rgba(255,253,200,0.68)",
+          boxShadow: "0 1px 4px rgba(0,0,0,0.12)",
+          zIndex: 2,
+        }} />
         {/* ── Left: Profile card ── */}
         <div style={{
           width: 260, flexShrink: 0,
@@ -248,6 +270,47 @@ export default function ProfileModal({ user, onClose }: Props) {
                 <span style={{ fontSize: 13, fontWeight: 600, color: text }}>{value}</span>
               </div>
             ))}
+          </div>
+
+          <div style={{
+            marginTop: 8,
+            padding: "9px 12px",
+            borderRadius: 9,
+            background: inp,
+            border: `1px solid ${bdr}`,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 10,
+          }}>
+            <span style={{ fontSize: 12, color: muted }}>Buy me a coffee button</span>
+            <button
+              onClick={() => setCoffeeVisible(!coffeeVisible)}
+              aria-pressed={coffeeVisible}
+              title={coffeeVisible ? "Hide coffee button" : "Show coffee button"}
+              style={{
+                width: 42,
+                height: 24,
+                borderRadius: 999,
+                border: `1px solid ${coffeeVisible ? theme.accent : bdr}`,
+                background: coffeeVisible ? theme.accent : inp,
+                padding: 2,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: coffeeVisible ? "flex-end" : "flex-start",
+                transition: "background 160ms, border-color 160ms",
+                flexShrink: 0,
+              }}
+            >
+              <span style={{
+                width: 18,
+                height: 18,
+                borderRadius: "50%",
+                background: "#fff",
+                boxShadow: "0 1px 4px rgba(0,0,0,0.22)",
+              }} />
+            </button>
           </div>
 
           {/* Spacer */}

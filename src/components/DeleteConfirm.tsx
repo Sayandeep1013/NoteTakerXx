@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { useTheme } from "@/hooks/useTheme";
+import { NOTE_COLOR_KEYS, type NoteColor } from "@/lib/colors";
 
 interface Props {
   noteTitle: string;
@@ -9,6 +11,12 @@ interface Props {
 }
 
 export default function DeleteConfirm({ noteTitle, onConfirm, onCancel }: Props) {
+  const theme = useTheme();
+  const [colorKey] = useState<NoteColor>(() => NOTE_COLOR_KEYS[Math.floor(Math.random() * NOTE_COLOR_KEYS.length)]);
+  const bg = theme.noteColors[colorKey] ?? "#ffab91";
+  const text = theme.noteText;
+  const line = theme.isDark ? "rgba(0,0,0,0.22)" : "rgba(0,0,0,0.10)";
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onCancel(); };
     window.addEventListener("keydown", onKey);
@@ -20,8 +28,9 @@ export default function DeleteConfirm({ noteTitle, onConfirm, onCancel }: Props)
       onClick={onCancel}
       style={{
         position: "fixed", inset: 0,
-        background: "rgba(0,0,0,0.45)",
-        backdropFilter: "blur(2px)",
+        background: theme.isDark ? "rgba(0,0,0,0.56)" : "rgba(20,18,24,0.36)",
+        backdropFilter: "blur(7px)",
+        WebkitBackdropFilter: "blur(7px)",
         zIndex: 400,
         display: "flex", alignItems: "center", justifyContent: "center",
       }}
@@ -29,27 +38,33 @@ export default function DeleteConfirm({ noteTitle, onConfirm, onCancel }: Props)
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: "#1e1e1e",
-          border: "1px solid rgba(255,255,255,0.1)",
-          borderRadius: 14,
-          padding: "28px 32px",
-          width: 340,
-          animation: "delIn 150ms ease-out",
+          position: "relative",
+          background: bg,
+          color: text,
+          borderRadius: 15,
+          padding: "34px 28px 24px",
+          width: 360,
+          transform: "rotate(-1.2deg)",
+          animation: "delIn 190ms cubic-bezier(0.34,1.35,0.64,1)",
+          boxShadow: theme.isDark ? "0 24px 70px rgba(0,0,0,0.6)" : "0 24px 70px rgba(0,0,0,0.22)",
+          backgroundImage: `repeating-linear-gradient(transparent, transparent 23px, ${line} 23px, ${line} 24.5px)`,
+          backgroundSize: "100% 24.5px",
         }}
       >
-        <p style={{ margin: "0 0 6px", fontWeight: 600, fontSize: 16, color: "#eee" }}>
+        <div style={{ position: "absolute", top: -10, left: "50%", transform: "translateX(-50%)", width: 54, height: 20, background: theme.isDark ? "rgba(255,250,200,0.24)" : "rgba(255,253,200,0.66)", borderRadius: 3, boxShadow: "0 1px 4px rgba(0,0,0,0.12)" }} />
+        <p style={{ margin: "0 0 8px", fontWeight: 850, fontSize: 18, color: text }}>
           Delete this note?
         </p>
-        <p style={{ margin: "0 0 24px", fontSize: 13, color: "#888" }}>
+        <p style={{ margin: "0 0 26px", fontSize: 13, lineHeight: 1.55, color: text, opacity: 0.72 }}>
           {noteTitle ? `"${noteTitle}"` : "This note"} will be permanently removed.
         </p>
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
           <button
             onClick={onCancel}
             style={{
-              padding: "8px 18px", borderRadius: 8,
-              background: "transparent", border: "1px solid rgba(255,255,255,0.15)",
-              color: "#ccc", cursor: "pointer", fontSize: 13,
+              padding: "8px 18px", borderRadius: 9,
+              background: "rgba(255,255,255,0.24)", border: `1px solid ${text}22`,
+              color: text, cursor: "pointer", fontSize: 13, fontFamily: "inherit",
             }}
           >
             Cancel
@@ -57,9 +72,9 @@ export default function DeleteConfirm({ noteTitle, onConfirm, onCancel }: Props)
           <button
             onClick={onConfirm}
             style={{
-              padding: "8px 18px", borderRadius: 8,
-              background: "#e57373", border: "none",
-              color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600,
+              padding: "8px 18px", borderRadius: 9,
+              background: "rgba(210,55,55,0.88)", border: "none",
+              color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 700, fontFamily: "inherit",
             }}
           >
             Delete

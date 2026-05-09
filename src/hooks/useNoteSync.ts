@@ -10,6 +10,13 @@ const CACHE_KEY  = "nxtaker_notes";
 const DEBOUNCE   = 800;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+type GuestCache = {
+  version: 2;
+  notes: Note[];
+  topZ: number;
+  savedAt: string;
+};
+
 function createCloudId() {
   return globalThis.crypto?.randomUUID?.() ?? crypto.randomUUID();
 }
@@ -20,6 +27,31 @@ function hasCloudId(note: Note) {
 
 function withCloudId(note: Note): Note {
   return hasCloudId(note) ? note : { ...note, id: createCloudId() };
+}
+
+function safeTopZ(notes: Note[]) {
+  return Math.max(10, ...notes.map((n) => n.zIndex));
+}
+
+function readGuestCache(): Note[] {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as Note[] | GuestCache;
+    if (Array.isArray(parsed)) return parsed;
+    if (Array.isArray(parsed.notes)) return parsed.notes;
+  } catch {}
+  return [];
+}
+
+function writeGuestCache(notes: Note[]) {
+  const payload: GuestCache = {
+    version: 2,
+    notes,
+    topZ: safeTopZ(notes),
+    savedAt: new Date().toISOString(),
+  };
+  localStorage.setItem(CACHE_KEY, JSON.stringify(payload));
 }
 
 // ── Row mapping ────────────────────────────────────────────────────
@@ -89,8 +121,13 @@ export function useNoteSync(user: User | null, authLoading = false) {
 
   const prevNotes  = useRef<Note[]>([]);
   const timers     = useRef(new Map<string, ReturnType<typeof setTimeout>>());
-  const loadedFor  = useRef<string | null>(null); // which userId we've loaded
+  const loadedFor  = useRef<string | null | undefined>(undefined); // which userId we've loaded
   const guestHydratedFromCache = useRef(false);
+  const latestNotes = useRef<Note[]>(notes);
+
+  useEffect(() => {
+    latestNotes.current = notes;
+  }, [notes]);
 
   // ── Load: fires when the logged-in user changes ───────────────────
   useEffect(() => {
@@ -126,34 +163,20 @@ export function useNoteSync(user: User | null, authLoading = false) {
           if (error) { setDbError(`Load error: ${error.message}`); setSyncReady(true); return; }
           if (data) {
             const rows = data.map(fromRow);
-            useNotesStore.setState({ notes: rows, topZ: Math.max(...rows.map((n) => n.zIndex), 10) });
+            useNotesStore.setState({ notes: rows, topZ: safeTopZ(rows) });
             prevNotes.current = rows;
           }
           setSyncReady(true);
           // Check for cached guest notes
-          try {
-            const raw = localStorage.getItem(CACHE_KEY);
-            if (raw) {
-              const cached: Note[] = JSON.parse(raw);
-              if (cached.length > 0) { setCachedCount(cached.length); setShowMergePrompt(true); }
-            }
-          } catch { /* ignore */ }
+          const cached = readGuestCache();
+          if (cached.length > 0) { setCachedCount(cached.length); setShowMergePrompt(true); }
         });
 
     } else {
       // Guest — load from localStorage
-      let cachedNotes: Note[] | null = null;
-      try {
-        const raw = localStorage.getItem(CACHE_KEY);
-        if (raw) {
-          const cached: Note[] = JSON.parse(raw);
-          if (cached.length > 0) {
-            cachedNotes = cached;
-          }
-        }
-      } catch { /* ignore */ }
-      if (cachedNotes) {
-        useNotesStore.setState({ notes: cachedNotes, topZ: Math.max(...cachedNotes.map((n) => n.zIndex), 10) });
+      const cachedNotes = readGuestCache();
+      if (cachedNotes.length > 0) {
+        useNotesStore.setState({ notes: cachedNotes, topZ: safeTopZ(cachedNotes) });
         prevNotes.current = cachedNotes;
         guestHydratedFromCache.current = true;
       } else {
@@ -172,7 +195,7 @@ export function useNoteSync(user: User | null, authLoading = false) {
     if (!user) {
       if (notes.length === 0 && guestHydratedFromCache.current) return;
       guestHydratedFromCache.current = false;
-      try { localStorage.setItem(CACHE_KEY, JSON.stringify(notes)); } catch { /* quota */ }
+      try { writeGuestCache(notes); } catch { /* quota */ }
       prevNotes.current = [...notes];
       return;
     }
@@ -229,7 +252,7 @@ export function useNoteSync(user: User | null, authLoading = false) {
     try {
       const raw = localStorage.getItem(CACHE_KEY);
       if (!raw) { setShowMergePrompt(false); return; }
-      const cached: Note[] = JSON.parse(raw);
+      const cached = readGuestCache();
       for (const note of cached) {
         const error = await resilientUpsert(supabase, withCloudId(note), user.id);
         if (error) throw error;
@@ -238,7 +261,7 @@ export function useNoteSync(user: User | null, authLoading = false) {
       const { data } = await supabase.from("notes").select("*").eq("user_id", user.id).order("created_at");
       if (data) {
         const merged = data.map(fromRow);
-        useNotesStore.setState({ notes: merged, topZ: Math.max(...merged.map((n) => n.zIndex), 10) });
+        useNotesStore.setState({ notes: merged, topZ: safeTopZ(merged) });
         prevNotes.current = merged;
       }
     } catch (e) { console.error("[useNoteSync] merge:", e); }
@@ -246,6 +269,19 @@ export function useNoteSync(user: User | null, authLoading = false) {
   };
 
   const discardLocal = () => { localStorage.removeItem(CACHE_KEY); setShowMergePrompt(false); };
+
+  useEffect(() => {
+    if (user || authLoading) return;
+    const flush = () => {
+      try { writeGuestCache(latestNotes.current); } catch {}
+    };
+    window.addEventListener("beforeunload", flush);
+    window.addEventListener("pagehide", flush);
+    return () => {
+      window.removeEventListener("beforeunload", flush);
+      window.removeEventListener("pagehide", flush);
+    };
+  }, [authLoading, user]);
 
   return { showMergePrompt, cachedCount, mergeLocalToCloud, discardLocal, dbError };
 }

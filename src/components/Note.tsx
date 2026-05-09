@@ -39,6 +39,13 @@ function lineContinuation(line: string): string | null {
 
 interface Props { note: NoteType; gridUnit: number; }
 
+const MIN_NOTE_FONT = 11;
+const MAX_NOTE_FONT = 22;
+
+function clampNoteFontSize(size: number) {
+  return Math.min(MAX_NOTE_FONT, Math.max(MIN_NOTE_FONT, size));
+}
+
 export default function Note({ note, gridUnit: G }: Props) {
   const {
     updateNote, deleteNote, bringToFront,
@@ -46,6 +53,7 @@ export default function Note({ note, gridUnit: G }: Props) {
     newNoteId, setNewNoteId,
     connectionMode, setConnectionMode, addConnection,
     setFocusedNoteId, pendingInsert, setPendingInsert,
+    highlightedNoteId, setHighlightedNoteId,
   } = useNotesStore();
   const panX = useNotesStore((s) => s.canvas.panX);
   const panY = useNotesStore((s) => s.canvas.panY);
@@ -71,7 +79,7 @@ export default function Note({ note, gridUnit: G }: Props) {
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const onNoteEnter = () => { clearTimeout(leaveTimer.current); setHovered(true); };
-  const onNoteLeave = () => { leaveTimer.current = setTimeout(() => setHovered(false), 90); };
+  const onNoteLeave = () => { leaveTimer.current = setTimeout(() => setHovered(false), 650); };
 
   useEffect(() => {
     if (!isEditing) { setEditTitle(note.title); setEditBody(note.body); }
@@ -248,6 +256,11 @@ export default function Note({ note, gridUnit: G }: Props) {
   const textColor = theme.noteText;
   const phColor   = theme.notePlaceholder;
   const lineColor = isDark ? "rgba(0,0,0,0.18)" : "rgba(0,0,0,0.07)";
+  const bodyFontSize = note.fontSize ?? 13;
+  const lineStep = Math.max(20.5, bodyFontSize * 1.58);
+  const adjustFontSize = (delta: number) => {
+    updateNote(note.id, { fontSize: clampNoteFontSize(bodyFontSize + delta) });
+  };
 
   const visualX = dragPos?.x ?? resizeDims?.x ?? note.x * G;
   const visualY = dragPos?.y ?? resizeDims?.y ?? note.y * G;
@@ -272,6 +285,13 @@ export default function Note({ note, gridUnit: G }: Props) {
   ];
 
   const isConnectionSource = connectionMode === note.id;
+  const isHighlighted = highlightedNoteId === note.id;
+
+  useEffect(() => {
+    if (!isHighlighted) return;
+    const timer = setTimeout(() => setHighlightedNoteId(null), 2400);
+    return () => clearTimeout(timer);
+  }, [isHighlighted, setHighlightedNoteId]);
 
   const handlePointerDown = (e: React.PointerEvent) => {
     e.stopPropagation();
@@ -291,7 +311,7 @@ export default function Note({ note, gridUnit: G }: Props) {
         onMouseLeave={onNoteLeave}
         onPointerDown={handlePointerDown}
         onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenu({ x: e.clientX, y: e.clientY }); }}
-        className={badgeMode ? "badge-mode-active" : isConnectionSource ? "connection-source-active" : ""}
+        className={`sticky-note-font ${badgeMode ? "badge-mode-active" : isConnectionSource ? "connection-source-active" : ""}`}
         style={{
           position: "absolute", left: visualX, top: visualY, width: visualW, height: visualH,
           background: bg, borderRadius: 14,
@@ -319,8 +339,12 @@ export default function Note({ note, gridUnit: G }: Props) {
               <div style={{ display: "flex", gap: 3 }}>{[0,1,2].map(i => <div key={i} style={{ width: 3, height: 3, borderRadius: "50%", background: textColor, opacity: 0.3 }} />)}</div>
             )}
           </div>
+          <FontSizeButton label="-" title="Decrease text size" onClick={() => adjustFontSize(-1)} disabled={bodyFontSize <= MIN_NOTE_FONT} />
+          <FontSizeButton label="+" title="Increase text size" onClick={() => adjustFontSize(1)} disabled={bodyFontSize >= MAX_NOTE_FONT} />
           <Dot color="#ff453a" title="Delete" onClick={() => setShowDelete(true)} extraStyle={{ opacity: hovered ? 1 : 0.45, transition: "opacity 200ms" }}>{hovered && <TrashIcon />}</Dot>
         </div>
+
+        {isHighlighted && <NoteSpotlight />}
 
         {/* ── Content ── */}
         {isEditing ? (
@@ -354,10 +378,10 @@ export default function Note({ note, gridUnit: G }: Props) {
               onKeyDown={handleBodyKeyDown}
               style={{
                 background: "transparent", border: "none", outline: "none", resize: "none",
-                fontSize: 13, fontWeight: 400, color: textColor, fontFamily: "inherit",
+                fontSize: bodyFontSize, fontWeight: 400, color: textColor, fontFamily: "inherit",
                 lineHeight: "1.55", width: "100%", flex: 1, padding: 0, cursor: "text",
-                backgroundImage: `repeating-linear-gradient(transparent, transparent 19px, ${lineColor} 19px, ${lineColor} 20.5px)`,
-                backgroundSize: "100% 20.5px",
+                backgroundImage: `repeating-linear-gradient(transparent, transparent ${lineStep - 1.5}px, ${lineColor} ${lineStep - 1.5}px, ${lineColor} ${lineStep}px)`,
+                backgroundSize: `100% ${lineStep}px`,
               }}
             />
           </div>
@@ -365,7 +389,7 @@ export default function Note({ note, gridUnit: G }: Props) {
           <div style={{ height: visualH - 34, display: "flex", flexDirection: "column", overflow: "hidden" }}>
             {/* Title */}
             <div className="note-title-clickable" onClick={() => enterEdit("title")} style={{ padding: "8px 11px 5px", fontWeight: 800, fontSize: 16, color: textColor, flexShrink: 0, cursor: "text" }}>
-              <div style={{ overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
+              <div className="note-rendered-text" style={{ overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
                 {note.title || <span style={{ color: phColor, fontWeight: 500 }}>Title</span>}
               </div>
             </div>
@@ -375,14 +399,14 @@ export default function Note({ note, gridUnit: G }: Props) {
               className="note-body-clickable"
               onClick={() => enterEdit("body")}
               style={{
-                padding: "2px 11px 9px", fontSize: 13, flex: 1, overflow: "hidden", cursor: "text",
-                backgroundImage: `repeating-linear-gradient(transparent, transparent 19px, ${lineColor} 19px, ${lineColor} 20.5px)`,
-                backgroundSize: "100% 20.5px",
+                padding: "2px 11px 9px", fontSize: bodyFontSize, flex: 1, overflow: "hidden", cursor: "text",
+                backgroundImage: `repeating-linear-gradient(transparent, transparent ${lineStep - 1.5}px, ${lineColor} ${lineStep - 1.5}px, ${lineColor} ${lineStep}px)`,
+                backgroundSize: `100% ${lineStep}px`,
               }}
             >
               {note.body
-                ? <BodyRenderer body={note.body} textColor={textColor} onToggle={toggleTodo} />
-                : <span style={{ color: phColor, lineHeight: "1.55" }}>Tap to write...</span>
+                ? <BodyRenderer body={note.body} textColor={textColor} onToggle={toggleTodo} fontSize={bodyFontSize} />
+                : <span style={{ color: phColor, lineHeight: "1.55", fontSize: bodyFontSize }}>Tap to write...</span>
               }
             </div>
           </div>
@@ -418,7 +442,7 @@ export default function Note({ note, gridUnit: G }: Props) {
 
       {/* Portals */}
       {contextMenu && createPortal(<NoteContextMenu x={contextMenu.x} y={contextMenu.y} noteId={note.id} noteBadges={note.badges} onEdit={() => enterEdit("title")} onDelete={() => setShowDelete(true)} onClose={() => setContextMenu(null)} />, document.body)}
-      {isFullscreen && createPortal(<NoteFullscreen note={note} theme={theme} originX={originX} originY={originY} onClose={() => setIsFullscreen(false)} />, document.body)}
+      {isFullscreen && createPortal(<NoteFullscreen note={note} theme={theme} originX={originX} originY={originY} originW={visualW} originH={visualH} onClose={() => setIsFullscreen(false)} />, document.body)}
       {showDelete && createPortal(<DeleteConfirm noteTitle={note.title} onConfirm={() => { deleteNote(note.id); setShowDelete(false); }} onCancel={() => setShowDelete(false)} />, document.body)}
     </>
   );
@@ -426,16 +450,16 @@ export default function Note({ note, gridUnit: G }: Props) {
 
 // ── Rich text view renderer ─────────────────────────────────────
 
-function BodyRenderer({ body, textColor, onToggle }: { body: string; textColor: string; onToggle: (i: number) => void }) {
+function BodyRenderer({ body, textColor, onToggle, fontSize }: { body: string; textColor: string; onToggle: (i: number) => void; fontSize: number }) {
   const lines = body.split("\n");
   return (
-    <div style={{ lineHeight: "1.55" }}>
+    <div className="note-rendered-text" style={{ fontSize, lineHeight: "1.55" }}>
       {lines.map((line, i) => {
         const { type, content, num } = detectLine(line);
 
         if (type === "bullet") return (
           <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 6, minHeight: "1.55em" }}>
-            <span style={{ color: textColor, opacity: 0.55, flexShrink: 0, marginTop: "0.12em", fontSize: 15 }}>•</span>
+            <span style={{ color: textColor, opacity: 0.55, flexShrink: 0, marginTop: "0.12em", fontSize: fontSize + 2 }}>•</span>
             <span style={{ color: textColor }}>{content || " "}</span>
           </div>
         );
@@ -458,7 +482,7 @@ function BodyRenderer({ body, textColor, onToggle }: { body: string; textColor: 
 
         if (type === "numbered") return (
           <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 5, minHeight: "1.55em" }}>
-            <span style={{ color: textColor, opacity: 0.5, flexShrink: 0, minWidth: "1.8em", textAlign: "right", fontSize: 12, marginTop: "0.08em" }}>{num}.</span>
+            <span style={{ color: textColor, opacity: 0.5, flexShrink: 0, minWidth: "1.8em", textAlign: "right", fontSize: Math.max(11, fontSize - 1), marginTop: "0.08em" }}>{num}.</span>
             <span style={{ color: textColor }}>{content || " "}</span>
           </div>
         );
@@ -476,6 +500,53 @@ function Dot({ color, title, onClick, children, extraStyle }: { color: string; t
     <button onClick={(e) => { e.stopPropagation(); onClick(); }} title={title} style={{ width: 15, height: 15, borderRadius: "50%", background: color, border: "none", cursor: "pointer", padding: 0, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", ...extraStyle }}>
       {children}
     </button>
+  );
+}
+
+function FontSizeButton({ label, title, onClick, disabled }: { label: string; title: string; onClick: () => void; disabled: boolean }) {
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); if (!disabled) onClick(); }}
+      title={title}
+      disabled={disabled}
+      style={{
+        width: 18,
+        height: 18,
+        borderRadius: "50%",
+        border: "none",
+        background: "rgba(0,0,0,0.12)",
+        color: "inherit",
+        cursor: disabled ? "default" : "pointer",
+        opacity: disabled ? 0.28 : 0.72,
+        padding: 0,
+        flexShrink: 0,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: 13,
+        fontWeight: 900,
+        lineHeight: "18px",
+        fontFamily: "var(--font-geist-sans), system-ui, sans-serif",
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+function NoteSpotlight() {
+  return (
+    <div
+      style={{
+        position: "absolute",
+        inset: -7,
+        borderRadius: 19,
+        border: "2.5px dashed var(--accent)",
+        pointerEvents: "none",
+        zIndex: 30,
+        animation: "noteSpotlightPulse 850ms ease-in-out infinite alternate",
+      }}
+    />
   );
 }
 

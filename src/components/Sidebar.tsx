@@ -2,7 +2,7 @@
 
 import { createPortal } from "react-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNotesStore, SIDEBAR_W_OPEN, SIDEBAR_W_CLOSED } from "@/store/notes";
+import { useNotesStore } from "@/store/notes";
 import { DEFAULT_BADGES } from "@/lib/badges";
 import { useTheme } from "@/hooks/useTheme";
 import { THEMES, type ThemeName } from "@/lib/themes";
@@ -11,6 +11,19 @@ import { useAuth } from "@/hooks/useAuth";
 import { useProfile } from "@/hooks/useProfile";
 import { useNoteSync } from "@/hooks/useNoteSync";
 import ProfileModal from "./ProfileModal";
+import type { BadgeDef } from "@/lib/badges";
+import { NOTE_COLOR_KEYS, type NoteColor } from "@/lib/colors";
+import { useHudScale } from "@/hooks/useHudScale";
+
+const DOCK_KEY = "nxtaker_dock_position";
+const COFFEE_KEY = "nxtaker_coffee_visible";
+const GUEST_BADGES_KEY = "nxtaker_custom_badges";
+const DOCK_W = 680;
+const DOCK_H = 70;
+const MINI = 52;
+const HUD_BOTTOM = 32;
+const CREATE_BUTTON_SIZE = 52;
+const HUD_GAP = 14;
 
 export default function Sidebar() {
   const {
@@ -18,9 +31,11 @@ export default function Sidebar() {
     sidebarOpen, setSidebarOpen,
     theme: themeName, setTheme,
     badgeMode, setBadgeMode,
-    customBadges, addCustomBadge, setCustomBadges,
+    customBadges, addCustomBadge, deleteCustomBadge, setCustomBadges,
     badgeFilter, setBadgeFilter,
     noteSearch, setNoteSearch,
+    coffeeVisible, setCoffeeVisible,
+    bringToFront, setHighlightedNoteId,
   } = useNotesStore();
   const customBadgeRef = useRef<HTMLInputElement>(null);
   const customBadgesReady = useRef(false);
@@ -30,10 +45,14 @@ export default function Sidebar() {
   const { profile } = useProfile(user);
   const { showMergePrompt, cachedCount, mergeLocalToCloud, discardLocal, dbError } = useNoteSync(user, loading);
   const [showProfile, setShowProfile] = useState(false);
-  const [filterOpen, setFilterOpen] = useState(false);
+  const [panel, setPanel] = useState<"theme" | "search" | "filter" | null>(null);
+  const [deleteBadge, setDeleteBadge] = useState<{ id: string; label: string; count: number } | null>(null);
+  const hudScale = useHudScale();
 
-  const w = sidebarOpen ? SIDEBAR_W_OPEN : SIDEBAR_W_CLOSED;
-  const allBadges = useMemo(() => [
+  const width = sidebarOpen ? DOCK_W : MINI;
+  const height = sidebarOpen ? DOCK_H : MINI;
+
+  const allBadges = useMemo<BadgeDef[]>(() => [
     ...DEFAULT_BADGES,
     ...customBadges.map(cb => ({
       id: cb.id, label: cb.label, color: "#888", ring: "#666",
@@ -42,6 +61,7 @@ export default function Sidebar() {
       ),
     })),
   ], [customBadges]);
+
   const visibleList = useMemo(() => {
     const q = noteSearch.trim().toLowerCase();
     return notes
@@ -51,15 +71,34 @@ export default function Sidebar() {
   }, [badgeFilter, noteSearch, notes]);
 
   useEffect(() => {
+    try {
+      localStorage.removeItem(DOCK_KEY);
+      const coffee = localStorage.getItem(COFFEE_KEY);
+      if (coffee !== null) setCoffeeVisible(coffee === "true");
+    } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    try { localStorage.setItem(COFFEE_KEY, String(coffeeVisible)); } catch {}
+  }, [coffeeVisible]);
+
+  useEffect(() => {
     customBadgesReady.current = false;
     if (!user) {
-      setCustomBadges([]);
+      try {
+        const saved = localStorage.getItem(GUEST_BADGES_KEY);
+        setCustomBadges(saved ? JSON.parse(saved) : []);
+      } catch {
+        setCustomBadges([]);
+      }
+      customBadgesReady.current = true;
       return;
     }
     const sb = createClient();
     sb.from("profiles").select("custom_badges").eq("id", user.id).single().then(({ data, error }) => {
       if (error) {
-        console.warn("[Sidebar] custom_badges load:", error.message);
+        console.warn("[Dock] custom_badges load:", error.message);
         customBadgesReady.current = true;
         return;
       }
@@ -69,333 +108,237 @@ export default function Sidebar() {
   }, [setCustomBadges, user]);
 
   useEffect(() => {
-    if (!user || !customBadgesReady.current) return;
+    if (!customBadgesReady.current) return;
+    if (!user) {
+      try { localStorage.setItem(GUEST_BADGES_KEY, JSON.stringify(customBadges)); } catch {}
+      return;
+    }
     const sb = createClient();
     sb.from("profiles").upsert({ id: user.id, custom_badges: customBadges }, { onConflict: "id" }).then(({ error }) => {
-      if (error) console.warn("[Sidebar] custom_badges save:", error.message);
+      if (error) console.warn("[Dock] custom_badges save:", error.message);
     });
   }, [customBadges, user]);
+
+  const collapseDock = () => {
+    setSidebarOpen(false);
+    setPanel(null);
+  };
 
   const navigateToNote = (note: typeof notes[number]) => {
     const G = 80;
     setPan(window.innerWidth / 2 - (note.x * G + note.w * G / 2), window.innerHeight / 2 - (note.y * G + note.h * G / 2));
+    bringToFront(note.id);
+    setHighlightedNoteId(note.id);
+    setPanel(null);
   };
 
   const createCustomBadge = (file: File, url: string) => {
     addCustomBadge({ id: `custom_${Date.now()}`, label: file.name.replace(/\.[^.]+$/, ""), url });
   };
 
+  const requestDeleteBadge = (badge: BadgeDef) => {
+    if (!badge.id.startsWith("custom_")) return;
+    const count = notes.filter((note) => note.badges.includes(badge.id)).length;
+    setDeleteBadge({ id: badge.id, label: badge.label, count });
+  };
+
+  const confirmDeleteBadge = () => {
+    if (!deleteBadge) return;
+    deleteCustomBadge(deleteBadge.id);
+    setDeleteBadge(null);
+  };
+
+  const glass = isDark ? "rgba(18,18,22,0.82)" : "rgba(255,255,255,0.74)";
+  const border = isDark ? "rgba(255,255,255,0.22)" : "rgba(0,0,0,0.16)";
+
   return (
     <>
       <div
+        onClick={() => {
+          if (!sidebarOpen) {
+            setSidebarOpen(true);
+          }
+        }}
         style={{
           position: "fixed",
-          left: 12, top: 12, bottom: 12,
-          width: w,
-          borderRadius: 16,
-          background: isDark ? "rgba(18,18,22,0.82)" : "rgba(255,255,255,0.72)",
+          left: sidebarOpen ? "50%" : "auto",
+          right: sidebarOpen ? "auto" : HUD_BOTTOM + CREATE_BUTTON_SIZE + HUD_GAP,
+          bottom: HUD_BOTTOM,
+          width,
+          height,
+          borderRadius: sidebarOpen ? 18 : 16,
+          background: glass,
           backdropFilter: "blur(20px)",
           WebkitBackdropFilter: "blur(20px)",
-          border: `1.5px solid ${isDark ? "rgba(255,255,255,0.22)" : "rgba(0,0,0,0.18)"}`,
-          boxShadow: isDark ? "0 8px 40px rgba(0,0,0,0.5)" : "0 8px 40px rgba(0,0,0,0.10)",
-          zIndex: 300,
-          display: "flex", flexDirection: "column",
-          transition: "width 220ms cubic-bezier(0.4,0,0.2,1)",
+          border: `1.5px solid ${border}`,
+          boxShadow: isDark ? "0 8px 40px rgba(0,0,0,0.5)" : "0 8px 40px rgba(0,0,0,0.12)",
+          zIndex: 505,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: sidebarOpen ? "flex-start" : "center",
+          gap: 8,
+          padding: sidebarOpen ? "9px 12px" : 0,
+          cursor: sidebarOpen ? "default" : "pointer",
+          transform: sidebarOpen ? `translateX(-50%) scale(${hudScale})` : `scale(${hudScale})`,
+          transformOrigin: sidebarOpen ? "bottom center" : "bottom right",
+          transition: "width 300ms cubic-bezier(0.18,1.35,0.28,1), height 300ms cubic-bezier(0.18,1.35,0.28,1), border-radius 300ms cubic-bezier(0.18,1.35,0.28,1), transform 180ms ease",
           overflow: "hidden",
         }}
+        title={sidebarOpen ? "Dock" : "Open dock"}
       >
-        {/* Collapse toggle */}
-        <div style={{ padding: "12px 10px 4px", flexShrink: 0 }}>
-          <SidebarBtn
-            open={sidebarOpen}
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            icon={sidebarOpen ? <ChevronLeft /> : <ChevronRight />}
-            label=""
-            title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
-          />
-        </div>
-
-        <Divider isDark={isDark} />
-
-        {/* Tools */}
-        <div style={{ flex: 1, padding: "8px 10px", display: "flex", flexDirection: "column", gap: 2 }}>
-          {/* Theme picker */}
-          {sidebarOpen && (
-            <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.09em", color: "var(--text-muted)", padding: "4px 6px 4px" }}>
-              WALL THEME
-            </span>
-          )}
-          <ThemePicker open={sidebarOpen} current={themeName} onChange={setTheme} isDark={isDark} />
-          {/* DB error banner */}
-          {dbError && sidebarOpen && (
-            <div style={{ margin: "4px 0", padding: "8px 10px", borderRadius: 8, background: "rgba(220,50,50,0.12)", border: "1px solid rgba(220,50,50,0.25)", fontSize: 11, color: "#e05050", lineHeight: 1.4 }}>
-              {dbError}
-            </div>
-          )}
-
-          <Divider isDark={isDark} />
-          {sidebarOpen && (
-            <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.09em", color: "var(--text-muted)", padding: "6px 6px 4px" }}>
-              BADGES
-            </span>
-          )}
-          {/* Badge picker */}
-          <div style={{
-            padding: sidebarOpen ? "2px 6px 6px" : "2px 0 6px",
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 5,
-            alignItems: "center",
-            justifyContent: sidebarOpen ? "flex-start" : "center",
-          }}>
-            {allBadges.map((badge) => {
-              const active = badgeMode === badge.id;
-              const filtered = badgeFilter === badge.id;
-              const { Icon } = badge;
-              return (
-                <button
-                  key={badge.id}
-                  onClick={() => setBadgeMode(active ? null : badge.id)}
-                  title={active ? `Cancel (${badge.label} mode)` : `Place "${badge.label}" badge on a note`}
-                  style={{
-                    width: 36, height: 36, borderRadius: 8, padding: 3,
-                    background: active || filtered ? `${badge.color}22` : "transparent",
-                    border: `1.5px solid ${active || filtered ? badge.color : "transparent"}`,
-                    cursor: "pointer",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    transition: "all 150ms",
-                    flexShrink: 0,
-                    boxShadow: active ? `0 0 0 2px ${badge.color}44` : "none",
-                    opacity: badgeFilter && !filtered ? 0 : 1,
-                  }}
-                >
-                  <Icon size={28} />
-                </button>
-              );
-            })}
-            {/* Upload custom badge */}
-            <button
-              onClick={() => customBadgeRef.current?.click()}
-              title="Upload your own badge"
-              style={{
-                width: 36, height: 36, borderRadius: 8,
-                background: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)",
-                border: `1.5px dashed ${isDark ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.2)"}`,
-                cursor: "pointer", fontSize: 18, color: "var(--text-muted)",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                flexShrink: 0,
-              }}
-            >
-              +
-            </button>
-            <input
-              ref={customBadgeRef}
-              type="file"
-              accept="image/*"
-              style={{ display: "none" }}
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-                const reader = new FileReader();
-                reader.onload = (ev) => {
-                  const url = ev.target?.result as string;
-                  createCustomBadge(file, url);
-                };
-                reader.readAsDataURL(file);
-              }}
-            />
+        {!sidebarOpen ? (
+          <div style={{ width: "100%", height: "100%", display: "grid", placeItems: "center", color: "var(--text-ui)" }}>
+            <DockIcon />
           </div>
-          {badgeMode && sidebarOpen && (
-            <div style={{ fontSize: 11, color: "var(--accent)", padding: "0 8px 4px", fontStyle: "italic" }}>
-              Click any note to place badge
-            </div>
-          )}
-
-          <Divider isDark={isDark} />
-          {sidebarOpen ? (
-            <div style={{ padding: "4px 6px 6px", display: "flex", flexDirection: "column", gap: 7 }}>
-              <div style={{ display: "flex", gap: 6 }}>
-                <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
-                  <SearchIcon style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", opacity: 0.45, pointerEvents: "none" }} />
-                  <input
-                    value={noteSearch}
-                    onChange={(e) => setNoteSearch(e.target.value)}
-                    placeholder="Search notes"
-                    style={{
-                      width: "100%", height: 30, padding: "0 9px 0 28px",
-                      borderRadius: 8, border: `1px solid ${isDark ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.10)"}`,
-                      background: isDark ? "rgba(255,255,255,0.055)" : "rgba(0,0,0,0.045)",
-                      color: "var(--text-ui)", outline: "none", fontSize: 12, fontFamily: "inherit",
-                      boxSizing: "border-box",
+        ) : (
+          <>
+            <DockButton onClick={collapseDock} title="Compact dock">
+              <DockCollapseIcon />
+            </DockButton>
+            <div style={{ width: 1, height: 34, background: border, margin: "0 2px" }} />
+            <DockButton onClick={() => setPanel(panel === "theme" ? null : "theme")} title={`Theme: ${THEMES[themeName].label}`}>
+              <ThemeSwatch current={themeName} />
+            </DockButton>
+            <DockButton onClick={() => setPanel(panel === "search" ? null : "search")} title="Search notes">
+              <SearchIcon />
+            </DockButton>
+            <DockButton active={!!badgeFilter || panel === "filter"} onClick={() => setPanel(panel === "filter" ? null : "filter")} title="Filter notes">
+              <FilterIcon />
+            </DockButton>
+            <div style={{
+              display: "flex",
+              gap: 6,
+              flex: "1 1 auto",
+              minWidth: 210,
+              overflowX: "auto",
+              overflowY: "hidden",
+              alignItems: "center",
+              padding: "0 1px",
+              scrollbarWidth: "none",
+            }} className="dock-badge-strip">
+              {allBadges.map((badge) => {
+                const active = badgeMode === badge.id;
+                const { Icon } = badge;
+                const isCustom = badge.id.startsWith("custom_");
+                return (
+                  <button
+                    key={badge.id}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      requestDeleteBadge(badge);
                     }}
-                  />
-                </div>
-                <button
-                  onClick={() => setFilterOpen((v) => !v)}
-                  title="Filter"
-                  style={{
-                    width: 30, height: 30, borderRadius: 8, border: `1px solid ${badgeFilter ? currentTheme.accent : "transparent"}`,
-                    background: badgeFilter ? `${currentTheme.accent}22` : "var(--btn-hover)",
-                    color: "var(--text-ui)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-                    flexShrink: 0,
-                  }}
-                >
-                  <FilterIcon />
-                </button>
-              </div>
-
-              {filterOpen && (
-                <div style={{
-                  borderRadius: 10,
-                  border: `1px solid ${isDark ? "rgba(255,255,255,0.09)" : "rgba(0,0,0,0.08)"}`,
-                  background: isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.035)",
-                  padding: 8,
-                }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 7 }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-ui)" }}>Filter</span>
-                    {badgeFilter && (
-                      <button onClick={() => setBadgeFilter(null)} style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 11 }}>
-                        Clear
-                      </button>
-                    )}
-                  </div>
-                  <div style={{ fontSize: 10, color: "var(--text-muted)", marginBottom: 6 }}>Badge</div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                    {allBadges.map((badge) => {
-                      const active = badgeFilter === badge.id;
-                      const { Icon } = badge;
-                      return (
-                        <button
-                          key={badge.id}
-                          title={badge.label}
-                          onClick={() => setBadgeFilter(active ? null : badge.id)}
-                          style={{
-                            width: 31, height: 31, borderRadius: 8, padding: 3,
-                            border: `1.5px solid ${active ? badge.color : "transparent"}`,
-                            background: active ? `${badge.color}22` : "transparent",
-                            opacity: badgeFilter && !active ? 0 : 1,
-                            cursor: "pointer",
-                          }}
-                        >
-                          <Icon size={23} />
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {(noteSearch || badgeFilter) && (
-                <div style={{ flex: 1, minHeight: 70, overflow: "auto", paddingRight: 2 }}>
-                  {visibleList.length === 0 ? (
-                    <div style={{ color: "var(--text-muted)", fontSize: 11, padding: "8px 2px" }}>No matching notes</div>
-                  ) : visibleList.map((note) => (
-                    <button
-                      key={note.id}
-                      onClick={() => navigateToNote(note)}
-                      style={{
-                        width: "100%", display: "flex", alignItems: "center", gap: 8,
-                        padding: "6px 7px", marginBottom: 3, borderRadius: 8,
-                        background: "transparent", border: "none", color: "var(--text-ui)",
-                        cursor: "pointer", textAlign: "left", fontFamily: "inherit",
-                      }}
-                      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--btn-hover)"; }}
-                      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
-                    >
-                      <span style={{ width: 16, height: 16, borderRadius: 4, background: currentTheme.noteColors[note.color], flexShrink: 0 }} />
-                      <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12 }}>
-                        {note.title || note.body || "Untitled"}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
+                    onClick={() => setBadgeMode(active ? null : badge.id)}
+                    title={isCustom ? `${active ? "Cancel" : "Place"} ${badge.label} badge. Right-click to delete.` : active ? `Cancel ${badge.label} mode` : `Place ${badge.label} badge`}
+                    style={{
+                      width: 38, height: 38, borderRadius: 11, padding: 4,
+                      background: active ? `${badge.color}22` : "transparent",
+                      border: `1.5px solid ${active ? badge.color : "transparent"}`,
+                      boxShadow: active ? `0 0 0 2px ${badge.color}33` : "none",
+                      cursor: "pointer", flex: "0 0 auto",
+                    }}
+                  >
+                    <Icon size={28} />
+                  </button>
+                );
+              })}
+              <DockButton onClick={() => customBadgeRef.current?.click()} title="Upload badge" compact>
+                <PlusTiny />
+              </DockButton>
             </div>
-          ) : (
-            <SidebarBtn
-              open={sidebarOpen}
-              onClick={() => { setSidebarOpen(true); setFilterOpen(true); }}
-              icon={<FilterIcon />}
-              label="Filter"
-              title="Search and filter"
-            />
-          )}
-        </div>
-
-        {/* Profile section */}
-        <Divider isDark={isDark} />
-        <div style={{ padding: "10px 10px 14px", flexShrink: 0 }}>
-          {user ? (
-            <button
-              onClick={() => setShowProfile(true)}
-              title="Edit profile"
-              style={{
-                display: "flex", alignItems: "center",
-                gap: sidebarOpen ? 10 : 0,
-                justifyContent: sidebarOpen ? "flex-start" : "center",
-                width: "100%", padding: "7px 8px", borderRadius: 10,
-                border: "none", background: "transparent",
-                cursor: "pointer", textAlign: "left",
-                transition: "background 130ms",
-              }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--btn-hover)"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
-            >
-              {/* Avatar */}
-              <div style={{
-                width: 30, height: 30, borderRadius: "50%", flexShrink: 0,
-                background: profile?.avatar_url ? "transparent" : "var(--accent)",
-                overflow: "hidden",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                fontSize: 13, fontWeight: 700, color: "#fff",
-              }}>
+            <div style={{ width: 1, height: 34, background: border, margin: "0 2px 0 0", flexShrink: 0 }} />
+            {user ? (
+              <button
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={() => setShowProfile(true)}
+                title="Profile"
+                style={{
+                  width: 42, height: 42, borderRadius: "50%", border: "none", cursor: "pointer",
+                  background: profile?.avatar_url ? "transparent" : "var(--accent)",
+                  color: "#fff", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: 15, fontWeight: 700, marginLeft: 0, flexShrink: 0,
+                }}
+              >
                 {profile?.avatar_url
                   ? <img src={profile.avatar_url} alt="avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                  : (profile?.username?.[0] ?? user.email?.[0] ?? "?").toUpperCase()
-                }
-              </div>
-              {/* Name + email (when open) */}
-              {sidebarOpen && (
-                <div style={{ overflow: "hidden", minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-ui)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {profile?.username || "Set username"}
-                  </div>
-                  <div style={{ fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {user.email}
-                  </div>
-                </div>
-              )}
-            </button>
-          ) : (
-            <SidebarBtn
-              open={sidebarOpen}
-              onClick={loading ? () => {} : signInWithGoogle}
-              icon={<GoogleIcon />}
-              label={loading ? "…" : "Sign in with Google"}
-              title="Sign in with Google"
-              disabled={loading}
+                  : (profile?.username?.[0] ?? user.email?.[0] ?? "?").toUpperCase()}
+              </button>
+            ) : (
+              <DockButton onClick={loading ? () => {} : signInWithGoogle} title="Sign in with Google" disabled={loading}>
+                <GoogleIcon />
+              </DockButton>
+            )}
+          </>
+        )}
+      </div>
+
+      {panel && sidebarOpen && (
+        <div
+          onPointerDown={(e) => e.stopPropagation()}
+          style={{
+            position: "fixed",
+            left: "50%",
+            bottom: HUD_BOTTOM + DOCK_H + 10,
+            transform: "translateX(-50%)",
+            width: panel === "search" ? 310 : 230,
+            maxHeight: "min(390px, calc(100vh - 116px))",
+            overflow: "auto",
+            padding: 10,
+            borderRadius: 14,
+            background: glass,
+            backdropFilter: "blur(22px)",
+            WebkitBackdropFilter: "blur(22px)",
+            border: `1px solid ${border}`,
+            boxShadow: isDark ? "0 14px 50px rgba(0,0,0,0.5)" : "0 14px 40px rgba(0,0,0,0.13)",
+            zIndex: 506,
+          }}
+        >
+          {panel === "theme" && <ThemePanel current={themeName} onChange={(t) => { setTheme(t); setPanel(null); }} />}
+          {panel === "filter" && (
+            <FilterPanel
+              allBadges={allBadges}
+              noteBadgeCounts={new Map(allBadges.map((badge) => [badge.id, notes.filter((note) => note.badges.includes(badge.id)).length]))}
+              badgeFilter={badgeFilter}
+              setBadgeFilter={setBadgeFilter}
+              onDeleteBadge={requestDeleteBadge}
             />
           )}
-          {/* Sign out — always visible when logged in */}
-          {user && (
-            <SidebarBtn
-              open={sidebarOpen}
-              onClick={signOut}
-              icon={<SignOutIcon />}
-              label="Sign out"
-              title="Sign out"
+          {panel === "search" && (
+            <SearchPanel
+              isDark={isDark}
+              currentTheme={currentTheme}
+              noteSearch={noteSearch}
+              setNoteSearch={setNoteSearch}
+              visibleList={visibleList}
+              navigateToNote={navigateToNote}
             />
           )}
         </div>
-      </div>
+      )}
 
-      {/* Profile modal */}
+      <input
+        ref={customBadgeRef}
+        type="file"
+        accept="image/*"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = (ev) => {
+            const url = ev.target?.result as string;
+            createCustomBadge(file, url);
+          };
+          reader.readAsDataURL(file);
+        }}
+      />
+
       {showProfile && user && createPortal(
         <ProfileModal user={user} onClose={() => setShowProfile(false)} />,
         document.body
       )}
 
-      {/* Local → cloud merge prompt */}
       {showMergePrompt && createPortal(
         <MergePrompt
           count={cachedCount}
@@ -404,33 +347,323 @@ export default function Sidebar() {
         />,
         document.body
       )}
+
+      {dbError && createPortal(<DbToast message={dbError} />, document.body)}
+      {deleteBadge && createPortal(
+        <DeleteBadgeConfirm
+          label={deleteBadge.label}
+          count={deleteBadge.count}
+          bg={currentTheme.noteColors.lavender}
+          text={currentTheme.noteText}
+          isDark={isDark}
+          onCancel={() => setDeleteBadge(null)}
+          onConfirm={confirmDeleteBadge}
+        />,
+        document.body
+      )}
+      {user && !showProfile && createPortal(
+        <button
+          onClick={signOut}
+          title="Sign out"
+          style={{ position: "fixed", left: -9999, top: -9999 }}
+        />,
+        document.body
+      )}
+
+      <style>{`
+        .dock-badge-strip::-webkit-scrollbar {
+          display: none;
+        }
+        @keyframes dockJiggleA {
+          0% { opacity: 0.94; }
+          100% { opacity: 1; }
+        }
+        @keyframes dockJiggleB {
+          0% { opacity: 0.94; }
+          100% { opacity: 1; }
+        }
+      `}</style>
     </>
   );
 }
 
-/* ── Merge prompt ── */
+function ThemePanel({ current, onChange }: { current: ThemeName; onChange: (t: ThemeName) => void }) {
+  const order: ThemeName[] = ["paper", "cork", "slate", "midnight", "forest", "dusk"];
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 7 }}>
+      {order.map((name) => {
+        const cfg = THEMES[name];
+        const active = current === name;
+        return (
+          <button key={name} onClick={() => onChange(name)} title={cfg.label}
+            style={{
+              aspectRatio: "1", borderRadius: 9, border: active ? "2px solid var(--text-ui)" : "2px solid transparent",
+              background: cfg.canvasBg, cursor: "pointer", padding: 0,
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 2,
+            }}
+          >
+            {Object.values(cfg.noteColors).slice(0, 3).map((c, i) => (
+              <span key={i} style={{ width: 13, height: 10, borderRadius: 2, background: c, transform: `rotate(${(i - 1) * 5}deg)` }} />
+            ))}
+          </button>
+        );
+      })}
+      <div style={{ gridColumn: "1/-1", fontSize: 11, color: "var(--text-muted)", textAlign: "center" }}>
+        {THEMES[current].label}
+      </div>
+    </div>
+  );
+}
+
+function FilterPanel({ allBadges, noteBadgeCounts, badgeFilter, setBadgeFilter, onDeleteBadge }: {
+  allBadges: BadgeDef[];
+  noteBadgeCounts: Map<string, number>;
+  badgeFilter: string | null;
+  setBadgeFilter: (id: string | null) => void;
+  onDeleteBadge: (badge: BadgeDef) => void;
+}) {
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text-ui)" }}>Filter by badge</span>
+        {badgeFilter && <button onClick={() => setBadgeFilter(null)} style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 11 }}>Clear</button>}
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        {allBadges.map((badge) => {
+          const active = badgeFilter === badge.id;
+          const { Icon } = badge;
+          const isCustom = badge.id.startsWith("custom_");
+          const usedCount = noteBadgeCounts.get(badge.id) ?? 0;
+          return (
+            <div key={badge.id} style={{ position: "relative", width: 38, height: 38 }}>
+              <button title={`${badge.label}${usedCount ? ` - ${usedCount} note${usedCount === 1 ? "" : "s"}` : ""}`} onClick={() => setBadgeFilter(active ? null : badge.id)}
+              style={{
+                width: 38, height: 38, borderRadius: 10, padding: 4,
+                background: active ? `${badge.color}22` : "transparent",
+                border: `1.5px solid ${active ? badge.color : "transparent"}`,
+                opacity: badgeFilter && !active ? 0.28 : 1, cursor: "pointer",
+              }}
+            >
+                <Icon size={28} />
+              </button>
+              {isCustom && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDeleteBadge(badge);
+                  }}
+                  title={`Delete ${badge.label}`}
+                  style={{
+                    position: "absolute",
+                    top: -5,
+                    right: -5,
+                    width: 17,
+                    height: 17,
+                    borderRadius: "50%",
+                    border: "1px solid rgba(0,0,0,0.18)",
+                    background: "rgba(20,20,25,0.9)",
+                    color: "#fff",
+                    cursor: "pointer",
+                    fontSize: 11,
+                    lineHeight: "15px",
+                    padding: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    boxShadow: "0 2px 8px rgba(0,0,0,0.22)",
+                  }}
+                >
+                  x
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function SearchPanel({ isDark, currentTheme, noteSearch, setNoteSearch, visibleList, navigateToNote }: {
+  isDark: boolean;
+  currentTheme: ReturnType<typeof useTheme>;
+  noteSearch: string;
+  setNoteSearch: (q: string) => void;
+  visibleList: ReturnType<typeof useNotesStore.getState>["notes"];
+  navigateToNote: (note: ReturnType<typeof useNotesStore.getState>["notes"][number]) => void;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ position: "relative" }}>
+        <SearchIcon style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", opacity: 0.45, pointerEvents: "none" }} />
+        <input
+          value={noteSearch}
+          onChange={(e) => setNoteSearch(e.target.value)}
+          placeholder="Search notes"
+          autoFocus
+          style={{
+            width: "100%", height: 34, padding: "0 10px 0 32px",
+            borderRadius: 10, border: `1px solid ${isDark ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.10)"}`,
+            background: isDark ? "rgba(255,255,255,0.055)" : "rgba(0,0,0,0.045)",
+            color: "var(--text-ui)", outline: "none", fontSize: 13, fontFamily: "inherit",
+          }}
+        />
+      </div>
+      {(noteSearch ? visibleList : visibleList.slice(0, 8)).length === 0 ? (
+        <div style={{ color: "var(--text-muted)", fontSize: 12, padding: "9px 2px" }}>No matching notes</div>
+      ) : (noteSearch ? visibleList : visibleList.slice(0, 8)).map((note) => (
+        <button
+          key={note.id}
+          onClick={() => navigateToNote(note)}
+          style={{
+            width: "100%", display: "flex", alignItems: "center", gap: 8,
+            padding: "7px 8px", borderRadius: 9, background: "transparent", border: "none",
+            color: "var(--text-ui)", cursor: "pointer", textAlign: "left", fontFamily: "inherit",
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = "var(--btn-hover)"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+        >
+          <span style={{ width: 18, height: 18, borderRadius: 5, background: currentTheme.noteColors[note.color], flexShrink: 0 }} />
+          <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12 }}>
+            {note.title || note.body || "Untitled"}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function DockButton({ children, onClick, title, active = false, disabled = false, compact = false }: {
+  children: React.ReactNode; onClick: () => void; title: string; active?: boolean; disabled?: boolean; compact?: boolean;
+}) {
+  return (
+    <button
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={onClick}
+      title={title}
+      disabled={disabled}
+      style={{
+        width: compact ? 38 : 42,
+        height: compact ? 38 : 42,
+        borderRadius: compact ? 11 : 13,
+        border: `1px solid ${active ? "var(--accent)" : "transparent"}`,
+        background: active ? "rgba(92,107,192,0.18)" : "transparent", color: "var(--text-ui)",
+        cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.45 : 1,
+        display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+      }}
+      onMouseEnter={(e) => { if (!disabled && !active) e.currentTarget.style.background = "var(--btn-hover)"; }}
+      onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent"; }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function ThemeSwatch({ current }: { current: ThemeName }) {
+  return <span style={{ width: 24, height: 24, borderRadius: 8, background: THEMES[current].canvasBg, border: "1px solid rgba(128,128,128,0.35)" }} />;
+}
+
 function MergePrompt({ count, onSave, onDiscard }: { count: number; onSave: () => void; onDiscard: () => void }) {
   return (
-    <div style={{
-      position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", backdropFilter: "blur(4px)",
-      zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center",
-    }}>
-      <div style={{
-        background: "#1e1e2a", borderRadius: 16, padding: "28px 32px", width: 360,
-        border: "1px solid rgba(255,255,255,0.10)", boxShadow: "0 20px 60px rgba(0,0,0,0.4)",
-      }}>
-        <p style={{ margin: "0 0 8px", fontWeight: 700, fontSize: 15, color: "#eee" }}>
-          You have {count} unsaved {count === 1 ? "note" : "notes"}
-        </p>
-        <p style={{ margin: "0 0 24px", fontSize: 13, color: "#888" }}>
-          These notes were created before you signed in. Save them to your account?
-        </p>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", backdropFilter: "blur(4px)", zIndex: 600, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ background: "#1e1e2a", borderRadius: 16, padding: "28px 32px", width: 360, border: "1px solid rgba(255,255,255,0.10)", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
+        <p style={{ margin: "0 0 8px", fontWeight: 700, fontSize: 15, color: "#eee" }}>You have {count} unsaved {count === 1 ? "note" : "notes"}</p>
+        <p style={{ margin: "0 0 24px", fontSize: 13, color: "#888" }}>These notes were created before you signed in. Save them to your account?</p>
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-          <button onClick={onDiscard} style={{ padding: "8px 16px", borderRadius: 8, background: "transparent", border: "1px solid rgba(255,255,255,0.15)", color: "#ccc", cursor: "pointer", fontSize: 13 }}>
-            Discard
+          <button onClick={onDiscard} style={{ padding: "8px 16px", borderRadius: 8, background: "transparent", border: "1px solid rgba(255,255,255,0.15)", color: "#ccc", cursor: "pointer", fontSize: 13 }}>Discard</button>
+          <button onClick={onSave} style={{ padding: "8px 18px", borderRadius: 8, background: "var(--accent)", border: "none", color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>Save to account</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DbToast({ message }: { message: string }) {
+  return <div style={{ position: "fixed", left: 16, bottom: 16, zIndex: 520, maxWidth: 360, padding: "9px 12px", borderRadius: 10, background: "rgba(220,50,50,0.12)", border: "1px solid rgba(220,50,50,0.25)", color: "#e05050", fontSize: 12 }}>{message}</div>;
+}
+
+function DeleteBadgeConfirm({ label, count, bg, text, isDark, onCancel, onConfirm }: {
+  label: string;
+  count: number;
+  bg: string;
+  text: string;
+  isDark: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const [colorKey] = useState<NoteColor>(() => NOTE_COLOR_KEYS[Math.floor(Math.random() * NOTE_COLOR_KEYS.length)]);
+  const theme = useTheme();
+  const noteBg = theme.noteColors[colorKey] ?? bg;
+  const line = isDark ? "rgba(0,0,0,0.22)" : "rgba(0,0,0,0.10)";
+  return (
+    <div
+      onClick={onCancel}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 700,
+        background: isDark ? "rgba(0,0,0,0.56)" : "rgba(20,18,24,0.36)",
+        backdropFilter: "blur(7px)",
+        WebkitBackdropFilter: "blur(7px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "min(390px, 92vw)",
+          position: "relative",
+          borderRadius: 15,
+          padding: "34px 28px 24px",
+          background: noteBg,
+          color: text,
+          transform: "rotate(1.1deg)",
+          boxShadow: isDark ? "0 24px 70px rgba(0,0,0,0.6)" : "0 24px 70px rgba(0,0,0,0.22)",
+          backgroundImage: `repeating-linear-gradient(transparent, transparent 23px, ${line} 23px, ${line} 24.5px)`,
+          backgroundSize: "100% 24.5px",
+          animation: "dockJiggleA 260ms cubic-bezier(0.2,1.2,0.35,1)",
+        }}
+      >
+        <div style={{ position: "absolute", top: -10, left: "50%", transform: "translateX(-50%)", width: 54, height: 20, background: isDark ? "rgba(255,250,200,0.24)" : "rgba(255,253,200,0.66)", borderRadius: 3, boxShadow: "0 1px 4px rgba(0,0,0,0.12)" }} />
+        <div style={{ fontSize: 18, fontWeight: 850, marginBottom: 8 }}>Delete badge?</div>
+        <div style={{ fontSize: 13, lineHeight: 1.55, color: text, opacity: 0.74, marginBottom: 22 }}>
+          Delete <strong style={{ color: text, opacity: 1 }}>{label}</strong>? {count > 0
+            ? `${count} note${count === 1 ? "" : "s"} currently use this badge. Deleting it will remove only the badge from those notes; the notes will stay.`
+            : "No notes currently use this badge."}
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <button
+            onClick={onCancel}
+            style={{
+              height: 34,
+              padding: "0 14px",
+              borderRadius: 9,
+              border: `1px solid ${text}22`,
+              background: "rgba(255,255,255,0.24)",
+              color: text,
+              cursor: "pointer",
+              fontFamily: "inherit",
+            }}
+          >
+            Cancel
           </button>
-          <button onClick={onSave} style={{ padding: "8px 18px", borderRadius: 8, background: "var(--accent)", border: "none", color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
-            Save to account
+          <button
+            onClick={onConfirm}
+            style={{
+              height: 34,
+              padding: "0 15px",
+              borderRadius: 9,
+              border: "none",
+              background: "rgba(210,55,55,0.88)",
+              color: "#fff",
+              cursor: "pointer",
+              fontWeight: 700,
+              fontFamily: "inherit",
+            }}
+          >
+            Delete badge
           </button>
         </div>
       </div>
@@ -438,117 +671,27 @@ function MergePrompt({ count, onSave, onDiscard }: { count: number; onSave: () =
   );
 }
 
-/* ── Theme picker ── */
-const THEME_ORDER: ThemeName[] = ["paper", "cork", "slate", "midnight", "forest", "dusk"];
-
-function ThemePicker({ open, current, onChange, isDark }: {
-  open: boolean; current: ThemeName;
-  onChange: (t: ThemeName) => void; isDark: boolean;
-}) {
-  if (open) {
-    return (
-      <div style={{ padding: "4px 6px 6px", display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
-        {THEME_ORDER.map((name) => {
-          const cfg = THEMES[name];
-          const active = current === name;
-          return (
-            <button
-              key={name}
-              onClick={() => onChange(name)}
-              title={cfg.label}
-              style={{
-                width: "100%", aspectRatio: "1",
-                borderRadius: 8, border: active ? "2px solid var(--text-ui)" : "2px solid transparent",
-                background: cfg.canvasBg,
-                cursor: "pointer", padding: 0,
-                boxShadow: active ? "0 0 0 1px rgba(255,255,255,0.3)" : "none",
-                display: "flex", flexDirection: "column",
-                alignItems: "center", justifyContent: "center",
-                gap: 2, overflow: "hidden",
-                transition: "border-color 150ms",
-              }}
-            >
-              {/* Mini sticky notes preview */}
-              {Object.values(cfg.noteColors).slice(0, 3).map((c, i) => (
-                <div key={i} style={{
-                  width: 12, height: 8, borderRadius: 2,
-                  background: c, opacity: 0.9,
-                  transform: `rotate(${(i - 1) * 5}deg)`,
-                  flexShrink: 0,
-                }} />
-              ))}
-            </button>
-          );
-        })}
-        <div style={{ gridColumn: "1/-1", fontSize: 10, color: "var(--text-muted)", textAlign: "center", marginTop: 2 }}>
-          {THEMES[current].label}
-        </div>
-      </div>
-    );
-  }
-  // Collapsed: show active swatch
+function SearchIcon({ style }: { style?: React.CSSProperties }) { return <svg style={style} width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="7.4" cy="7.4" r="5.1" stroke="currentColor" strokeWidth="1.7"/><line x1="11.2" y1="11.2" x2="15.4" y2="15.4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/></svg>; }
+function FilterIcon() { return <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3 4h12l-4.4 5.1v3.8L7.4 14.4V9.1L3 4Z" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
+function DockIcon() {
   return (
-    <button
-      onClick={() => {
-        const idx = THEME_ORDER.indexOf(current);
-        onChange(THEME_ORDER[(idx + 1) % THEME_ORDER.length]);
-      }}
-      title={`Theme: ${THEMES[current].label} (click to cycle)`}
-      style={{
-        width: 28, height: 28, borderRadius: 8, margin: "0 auto 2px",
-        background: THEMES[current].canvasBg,
-        border: `2px solid ${isDark ? "rgba(255,255,255,0.3)" : "rgba(0,0,0,0.2)"}`,
-        cursor: "pointer", display: "block",
-      }}
-    />
-  );
-}
-
-/* ── Generic sidebar button ── */
-function SidebarBtn({ open, onClick, icon, label, title, disabled = false }: {
-  open: boolean; onClick: () => void; icon: React.ReactNode;
-  label: string; title: string; disabled?: boolean;
-}) {
-  const [hovered, setHovered] = useState(false);
-  return (
-    <button onClick={onClick} title={title} disabled={disabled}
-      onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
-      style={{
-        display: "flex", alignItems: "center",
-        gap: open ? 10 : 0,
-        justifyContent: open ? "flex-start" : "center",
-        width: "100%", padding: "7px 8px", borderRadius: 8, border: "none",
-        background: hovered && !disabled ? "var(--btn-hover)" : "transparent",
-        color: disabled ? "var(--text-muted)" : "var(--text-ui)",
-        cursor: disabled ? "default" : "pointer",
-        fontSize: 13, fontFamily: "inherit", textAlign: "left",
-        whiteSpace: "nowrap", overflow: "hidden",
-        transition: "background 130ms", flexShrink: 0, opacity: disabled ? 0.4 : 1,
-      }}
-    >
-      <span style={{ flexShrink: 0, width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center" }}>{icon}</span>
-      {open && <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>}
-    </button>
-  );
-}
-
-function Divider({ isDark }: { isDark: boolean }) {
-  return <div style={{ height: 1, background: isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.07)", margin: "4px 10px", flexShrink: 0 }} />;
-}
-
-/* ── Icons ── */
-function ChevronLeft() { return <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 12L6 8l4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
-function ChevronRight() { return <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
-function SearchIcon({ style }: { style?: React.CSSProperties }) { return <svg style={style} width="13" height="13" viewBox="0 0 13 13" fill="none"><circle cx="5.5" cy="5.5" r="4" stroke="currentColor" strokeWidth="1.3"/><line x1="8.5" y1="8.5" x2="11.5" y2="11.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/></svg>; }
-function FilterIcon() { return <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><path d="M2 3h11L9 7.6v3.2l-3 1.4V7.6L2 3Z" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
-function SignOutIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <path d="M10 11l3-3-3-3M13 8H6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-      <path d="M6 13H3a1 1 0 01-1-1V4a1 1 0 011-1h3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+      <circle cx="8" cy="8" r="2.2" fill="currentColor" opacity="0.9"/>
+      <circle cx="16" cy="8" r="2.2" fill="currentColor" opacity="0.55"/>
+      <circle cx="8" cy="16" r="2.2" fill="currentColor" opacity="0.55"/>
+      <circle cx="16" cy="16" r="2.2" fill="currentColor" opacity="0.9"/>
     </svg>
   );
 }
+function DockCollapseIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+      <rect x="4" y="5" width="12" height="10" rx="3" stroke="currentColor" strokeWidth="1.6" opacity="0.75"/>
+      <path d="M8 8.5l2 1.5-2 1.5M12.2 8.5l-2 1.5 2 1.5" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  );
+}
+function PlusTiny() { return <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M9 4v10M4 9h10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>; }
 function GoogleIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none">

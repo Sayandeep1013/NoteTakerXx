@@ -71,20 +71,20 @@ export const THEMES: Record<ThemeName, ThemeConfig> = {
 
   // Slate: sophisticated cool dark blue-gray
   slate: {
-    name: "slate", label: "Slate", swatch: "#2a3045", isDark: true,
-    canvasBg: "#252c42",
-    sidebarBg: "rgba(18,22,38,0.88)",
-    sidebarBorder: "rgba(160,175,220,0.15)",
-    textUi: "#ccd4f0", textMuted: "rgba(204,212,240,0.42)",
-    accent: "#7c8de8", btnHover: "rgba(255,255,255,0.065)",
+    name: "slate", label: "Slate", swatch: "#2b2b32", isDark: true,
+    canvasBg: "#2b2b32",
+    sidebarBg: "rgba(20,20,24,0.88)",
+    sidebarBorder: "rgba(235,220,190,0.14)",
+    textUi: "#ece4d4", textMuted: "rgba(236,228,212,0.44)",
+    accent: "#d39a4a", btnHover: "rgba(255,226,184,0.08)",
     noteColors: {
-      yellow:   "#c8a84a", pink:     "#b85c7c",
-      mint:     "#3a9078", lavender: "#7050b0",
-      peach:    "#b85040", sky:      "#3870a8",
-      lilac:    "#9045a8", sage:     "#3c7848",
+      yellow:   "#d7b84f", pink:     "#c96a86",
+      mint:     "#4aa28b", lavender: "#8567c8",
+      peach:    "#c96b55", sky:      "#4f8fc0",
+      lilac:    "#aa62bd", sage:     "#669b60",
     },
-    noteText: "#f0eae0", notePlaceholder: "rgba(240,234,224,0.30)",
-    dotBase: [130, 150, 200, 0.18], dotHot: [110, 140, 240, 0.82],
+    noteText: "#fff5e6", notePlaceholder: "rgba(255,245,230,0.32)",
+    dotBase: [210, 190, 150, 0.18], dotHot: [230, 165, 80, 0.82],
   },
 
   // Midnight: deep navy — electric brights glow (complementary + triadic)

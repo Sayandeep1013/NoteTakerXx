@@ -11,6 +11,7 @@ const MIN_SIZE = 4;
 const GRID = 80;
 export const SIDEBAR_W_OPEN   = 220;
 export const SIDEBAR_W_CLOSED = 48;
+const DOCK_W_OPEN = 0;
 
 function createNoteId() {
   return globalThis.crypto?.randomUUID?.() ?? nanoid();
@@ -42,6 +43,7 @@ export interface Note {
   rotation: number;
   title: string;
   body: string;
+  fontSize?: number;
   locked: boolean;
   zIndex: number;
   badges: string[];
@@ -54,6 +56,9 @@ interface NotesStore {
   topZ: number;
   theme: ThemeName;
   sidebarOpen: boolean;
+  dockX: number | null;
+  dockY: number | null;
+  coffeeVisible: boolean;
   badgeMode: string | null;
   customBadges: CustomBadge[];
   newNoteId: string | null;         // signals which note should auto-focus on create
@@ -67,9 +72,12 @@ interface NotesStore {
   setPan: (x: number, y: number) => void;
   setTheme: (t: ThemeName) => void;
   setSidebarOpen: (v: boolean) => void;
+  setDockPosition: (x: number, y: number) => void;
+  setCoffeeVisible: (v: boolean) => void;
   setBadgeMode: (id: string | null) => void;
   toggleNoteBadge: (noteId: string, badgeId: string) => void;
   addCustomBadge: (badge: CustomBadge) => void;
+  deleteCustomBadge: (badgeId: string) => void;
   setCustomBadges: (badges: CustomBadge[]) => void;
   setNewNoteId: (id: string | null) => void;
   addConnection: (sourceId: string, targetId: string, color?: string) => void;
@@ -83,6 +91,8 @@ interface NotesStore {
   setBadgeFilter: (id: string | null) => void;
   noteSearch: string;
   setNoteSearch: (query: string) => void;
+  highlightedNoteId: string | null;
+  setHighlightedNoteId: (id: string | null) => void;
 }
 
 // Find first free MIN_SIZE slot scanning top-left → bottom-right
@@ -125,6 +135,9 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
   topZ: 10,
   theme: DEFAULT_THEME,
   sidebarOpen: true,
+  dockX: null,
+  dockY: null,
+  coffeeVisible: true,
   badgeMode: null,
   customBadges: [],
   newNoteId: null,
@@ -134,6 +147,7 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
   pendingInsert: null,
   badgeFilter: null,
   noteSearch: "",
+  highlightedNoteId: null,
 
   addNote: () => {
     const { notes, topZ, canvas, sidebarOpen } = get();
@@ -143,8 +157,8 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
     const vw = typeof window !== "undefined" ? window.innerWidth  : 1280;
     const vh = typeof window !== "undefined" ? window.innerHeight : 800;
 
-    const sidebarW = sidebarOpen ? SIDEBAR_W_OPEN : SIDEBAR_W_CLOSED;
-    const vLeft   = Math.ceil((-canvas.panX + sidebarW) / GRID);
+    const dockInset = sidebarOpen ? DOCK_W_OPEN : SIDEBAR_W_CLOSED;
+    const vLeft   = Math.ceil((-canvas.panX + dockInset) / GRID);
     const vTop    = Math.floor(-canvas.panY / GRID);
     const vRight  = Math.ceil((-canvas.panX + vw) / GRID);
     const vBottom = Math.ceil((-canvas.panY + vh) / GRID);
@@ -197,6 +211,7 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
         w: MIN_SIZE, h: MIN_SIZE,
         color, rotation,
         title: "", body: "",
+        fontSize: 13,
         locked: false,
         zIndex: topZ + 1,
         badges: [],
@@ -221,6 +236,8 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
   setPan: (x, y) => set({ canvas: { panX: x, panY: y } }),
   setTheme: (t) => set({ theme: t }),
   setSidebarOpen: (v) => set({ sidebarOpen: v }),
+  setDockPosition: (x, y) => set({ dockX: x, dockY: y }),
+  setCoffeeVisible: (v) => set({ coffeeVisible: v }),
   setBadgeMode: (id) => set({ badgeMode: id }),
   setNewNoteId: (id) => set({ newNoteId: id }),
   addConnection: (sourceId, targetId, color = "#e74c3c") =>
@@ -232,8 +249,20 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
   setPendingInsert: (type) => set({ pendingInsert: type }),
   setBadgeFilter: (id) => set({ badgeFilter: id }),
   setNoteSearch: (query) => set({ noteSearch: query }),
+  setHighlightedNoteId: (id) => set({ highlightedNoteId: id }),
   setCustomBadges: (badges) => set({ customBadges: badges }),
   addCustomBadge: (badge) => set((s) => ({ customBadges: [...s.customBadges, badge] })),
+  deleteCustomBadge: (badgeId) =>
+    set((s) => ({
+      customBadges: s.customBadges.filter((badge) => badge.id !== badgeId),
+      notes: s.notes.map((note) => (
+        note.badges.includes(badgeId)
+          ? { ...note, badges: note.badges.filter((id) => id !== badgeId) }
+          : note
+      )),
+      badgeMode: s.badgeMode === badgeId ? null : s.badgeMode,
+      badgeFilter: s.badgeFilter === badgeId ? null : s.badgeFilter,
+    })),
   toggleNoteBadge: (noteId, badgeId) =>
     set((s) => ({
       notes: s.notes.map((n) => {
