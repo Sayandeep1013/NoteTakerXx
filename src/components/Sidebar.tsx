@@ -18,7 +18,8 @@ import { useHudScale } from "@/hooks/useHudScale";
 const DOCK_KEY = "nxtaker_dock_position";
 const COFFEE_KEY = "nxtaker_coffee_visible";
 const GUEST_BADGES_KEY = "nxtaker_custom_badges";
-const DOCK_W = 680;
+const PHOTOS_BUCKET_DISABLED_KEY = "nxtaker_photos_bucket_disabled";
+const DOCK_W = 768;
 const DOCK_H = 70;
 const MINI = 52;
 const HUD_BOTTOM = 32;
@@ -36,8 +37,10 @@ export default function Sidebar() {
     noteSearch, setNoteSearch,
     coffeeVisible, setCoffeeVisible,
     bringToFront, setHighlightedNoteId,
+    addFolder, addPhoto, activeFolderId, setActiveFolderId,
   } = useNotesStore();
   const customBadgeRef = useRef<HTMLInputElement>(null);
+  const photoRef = useRef<HTMLInputElement>(null);
   const customBadgesReady = useRef(false);
   const currentTheme = useTheme();
   const isDark = currentTheme.isDark;
@@ -65,10 +68,14 @@ export default function Sidebar() {
   const visibleList = useMemo(() => {
     const q = noteSearch.trim().toLowerCase();
     return notes
+      .filter((note) => note.parentId === activeFolderId)
       .filter((note) => !badgeFilter || note.badges.includes(badgeFilter))
-      .filter((note) => !q || note.title.toLowerCase().includes(q) || note.body.toLowerCase().includes(q))
+      .filter((note) => {
+        const label = itemLabel(note).toLowerCase();
+        return !q || label.includes(q) || note.body.toLowerCase().includes(q) || (note.caption ?? "").toLowerCase().includes(q);
+      })
       .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
-  }, [badgeFilter, noteSearch, notes]);
+  }, [activeFolderId, badgeFilter, noteSearch, notes]);
 
   useEffect(() => {
     try {
@@ -126,10 +133,34 @@ export default function Sidebar() {
 
   const navigateToNote = (note: typeof notes[number]) => {
     const G = 80;
+    setActiveFolderId(note.parentId ?? null);
     setPan(window.innerWidth / 2 - (note.x * G + note.w * G / 2), window.innerHeight / 2 - (note.y * G + note.h * G / 2));
     bringToFront(note.id);
     setHighlightedNoteId(note.id);
     setPanel(null);
+  };
+
+  const handlePhotoUpload = async (file: File) => {
+    const resized = await resizeImageFile(file);
+    let url = resized.dataUrl;
+    let path: string | null = null;
+    if (user && localStorage.getItem(PHOTOS_BUCKET_DISABLED_KEY) !== "1") {
+      const sb = createClient();
+      path = `${user.id}/${crypto.randomUUID()}.jpg`;
+      const { error } = await sb.storage.from("photos").upload(path, resized.blob, { upsert: true, contentType: "image/jpeg" });
+      if (!error) {
+        const { data } = sb.storage.from("photos").getPublicUrl(path);
+        url = data.publicUrl;
+      } else {
+        if (error.message.toLowerCase().includes("bucket not found")) {
+          localStorage.setItem(PHOTOS_BUCKET_DISABLED_KEY, "1");
+        } else {
+          console.warn("[Dock] photo upload:", error.message);
+        }
+        path = null;
+      }
+    }
+    addPhoto(url, path, file.name.replace(/\.[^.]+$/, ""), resized.width, resized.height);
   };
 
   const createCustomBadge = (file: File, url: string) => {
@@ -148,8 +179,8 @@ export default function Sidebar() {
     setDeleteBadge(null);
   };
 
-  const glass = isDark ? "rgba(18,18,22,0.82)" : "rgba(255,255,255,0.74)";
-  const border = isDark ? "rgba(255,255,255,0.22)" : "rgba(0,0,0,0.16)";
+  const glass = currentTheme.sidebarBg;
+  const border = currentTheme.sidebarBorder;
 
   return (
     <>
@@ -168,8 +199,6 @@ export default function Sidebar() {
           height,
           borderRadius: sidebarOpen ? 18 : 16,
           background: glass,
-          backdropFilter: "blur(20px)",
-          WebkitBackdropFilter: "blur(20px)",
           border: `1.5px solid ${border}`,
           boxShadow: isDark ? "0 8px 40px rgba(0,0,0,0.5)" : "0 8px 40px rgba(0,0,0,0.12)",
           zIndex: 505,
@@ -204,6 +233,12 @@ export default function Sidebar() {
             </DockButton>
             <DockButton active={!!badgeFilter || panel === "filter"} onClick={() => setPanel(panel === "filter" ? null : "filter")} title="Filter notes">
               <FilterIcon />
+            </DockButton>
+            <DockButton onClick={() => addFolder()} title="Create folder">
+              <FolderDockIcon />
+            </DockButton>
+            <DockButton onClick={() => photoRef.current?.click()} title="Add photo">
+              <ImageDockIcon />
             </DockButton>
             <div style={{
               display: "flex",
@@ -287,8 +322,6 @@ export default function Sidebar() {
             padding: 10,
             borderRadius: 14,
             background: glass,
-            backdropFilter: "blur(22px)",
-            WebkitBackdropFilter: "blur(22px)",
             border: `1px solid ${border}`,
             boxShadow: isDark ? "0 14px 50px rgba(0,0,0,0.5)" : "0 14px 40px rgba(0,0,0,0.13)",
             zIndex: 506,
@@ -298,7 +331,7 @@ export default function Sidebar() {
           {panel === "filter" && (
             <FilterPanel
               allBadges={allBadges}
-              noteBadgeCounts={new Map(allBadges.map((badge) => [badge.id, notes.filter((note) => note.badges.includes(badge.id)).length]))}
+              noteBadgeCounts={new Map(allBadges.map((badge) => [badge.id, notes.filter((note) => note.parentId === activeFolderId && note.badges.includes(badge.id)).length]))}
               badgeFilter={badgeFilter}
               setBadgeFilter={setBadgeFilter}
               onDeleteBadge={requestDeleteBadge}
@@ -331,6 +364,18 @@ export default function Sidebar() {
             createCustomBadge(file, url);
           };
           reader.readAsDataURL(file);
+        }}
+      />
+      <input
+        ref={photoRef}
+        type="file"
+        accept="image/*"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.currentTarget.value = "";
+          if (!file) return;
+          void handlePhotoUpload(file);
         }}
       />
 
@@ -523,9 +568,9 @@ function SearchPanel({ isDark, currentTheme, noteSearch, setNoteSearch, visibleL
           onMouseEnter={(e) => { e.currentTarget.style.background = "var(--btn-hover)"; }}
           onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
         >
-          <span style={{ width: 18, height: 18, borderRadius: 5, background: currentTheme.noteColors[note.color], flexShrink: 0 }} />
+          <span style={{ width: 18, height: 18, borderRadius: note.type === "folder" ? 6 : 5, background: note.type === "photo" ? "#fff" : currentTheme.noteColors[note.color], border: note.type === "photo" ? "3px solid #fff" : "none", flexShrink: 0, boxShadow: note.type === "photo" ? "0 1px 4px rgba(0,0,0,0.18)" : "none" }} />
           <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12 }}>
-            {note.title || note.body || "Untitled"}
+            {itemLabel(note)}
           </span>
         </button>
       ))}
@@ -565,7 +610,7 @@ function ThemeSwatch({ current }: { current: ThemeName }) {
 
 function MergePrompt({ count, onSave, onDiscard }: { count: number; onSave: () => void; onDiscard: () => void }) {
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", backdropFilter: "blur(4px)", zIndex: 600, display: "flex", alignItems: "center", justifyContent: "center" }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 600, display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div style={{ background: "#1e1e2a", borderRadius: 16, padding: "28px 32px", width: 360, border: "1px solid rgba(255,255,255,0.10)", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
         <p style={{ margin: "0 0 8px", fontWeight: 700, fontSize: 15, color: "#eee" }}>You have {count} unsaved {count === 1 ? "note" : "notes"}</p>
         <p style={{ margin: "0 0 24px", fontSize: 13, color: "#888" }}>These notes were created before you signed in. Save them to your account?</p>
@@ -603,8 +648,6 @@ function DeleteBadgeConfirm({ label, count, bg, text, isDark, onCancel, onConfir
         inset: 0,
         zIndex: 700,
         background: isDark ? "rgba(0,0,0,0.56)" : "rgba(20,18,24,0.36)",
-        backdropFilter: "blur(7px)",
-        WebkitBackdropFilter: "blur(7px)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -673,6 +716,8 @@ function DeleteBadgeConfirm({ label, count, bg, text, isDark, onCancel, onConfir
 
 function SearchIcon({ style }: { style?: React.CSSProperties }) { return <svg style={style} width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="7.4" cy="7.4" r="5.1" stroke="currentColor" strokeWidth="1.7"/><line x1="11.2" y1="11.2" x2="15.4" y2="15.4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/></svg>; }
 function FilterIcon() { return <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3 4h12l-4.4 5.1v3.8L7.4 14.4V9.1L3 4Z" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
+function FolderDockIcon() { return <svg width="19" height="19" viewBox="0 0 19 19" fill="none"><path d="M2.8 6h5l1.4-1.7h7v10.2a1.4 1.4 0 01-1.4 1.4h-12a1.4 1.4 0 01-1.4-1.4V7.4A1.4 1.4 0 012.8 6z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round"/><path d="M9.5 8.6v4.4M7.3 10.8h4.4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/></svg>; }
+function ImageDockIcon() { return <svg width="19" height="19" viewBox="0 0 19 19" fill="none"><rect x="3" y="3.5" width="13" height="12" rx="2" stroke="currentColor" strokeWidth="1.7"/><path d="M5.3 13l3.1-3.2 2.2 2.2 1.4-1.5 2.7 2.5" stroke="currentColor" strokeWidth="1.55" strokeLinecap="round" strokeLinejoin="round"/><circle cx="12.8" cy="7" r="1.2" fill="currentColor"/></svg>; }
 function DockIcon() {
   return (
     <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
@@ -701,4 +746,38 @@ function GoogleIcon() {
       <path d="M8 3.68c1 0 1.9.34 2.6 1.01l1.94-1.94A6.96 6.96 0 008 1 6.99 6.99 0 001.96 4.72L4.2 6.48C4.73 4.87 6.23 3.68 8 3.68z" fill="#EA4335"/>
     </svg>
   );
+}
+
+function itemLabel(note: ReturnType<typeof useNotesStore.getState>["notes"][number]) {
+  if (note.type === "folder") return note.folderName || note.title || "Untitled Folder";
+  if (note.type === "photo") return note.caption || note.body || "Untitled Photo";
+  return note.title || note.body || "Untitled";
+}
+
+async function resizeImageFile(file: File): Promise<{ dataUrl: string; blob: Blob; width: number; height: number }> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = reject;
+    image.src = dataUrl;
+  });
+  const maxSide = 1600;
+  const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(img.width * scale));
+  canvas.height = Math.max(1, Math.round(img.height * scale));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Could not resize image");
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  const resizedDataUrl = canvas.toDataURL("image/jpeg", 0.86);
+  const blob = await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((value) => value ? resolve(value) : reject(new Error("Could not encode image")), "image/jpeg", 0.86);
+  });
+  return { dataUrl: resizedDataUrl, blob, width: canvas.width, height: canvas.height };
 }

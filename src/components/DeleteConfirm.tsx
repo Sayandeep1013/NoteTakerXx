@@ -6,11 +6,13 @@ import { NOTE_COLOR_KEYS, type NoteColor } from "@/lib/colors";
 
 interface Props {
   noteTitle: string;
+  itemType?: "note" | "folder" | "photo";
+  detail?: string;
   onConfirm: () => void;
   onCancel: () => void;
 }
 
-export default function DeleteConfirm({ noteTitle, onConfirm, onCancel }: Props) {
+export default function DeleteConfirm({ noteTitle, itemType = "note", detail, onConfirm, onCancel }: Props) {
   const theme = useTheme();
   const [colorKey] = useState<NoteColor>(() => NOTE_COLOR_KEYS[Math.floor(Math.random() * NOTE_COLOR_KEYS.length)]);
   const bg = theme.noteColors[colorKey] ?? "#ffab91";
@@ -29,8 +31,6 @@ export default function DeleteConfirm({ noteTitle, onConfirm, onCancel }: Props)
       style={{
         position: "fixed", inset: 0,
         background: theme.isDark ? "rgba(0,0,0,0.56)" : "rgba(20,18,24,0.36)",
-        backdropFilter: "blur(7px)",
-        WebkitBackdropFilter: "blur(7px)",
         zIndex: 400,
         display: "flex", alignItems: "center", justifyContent: "center",
       }}
@@ -53,10 +53,10 @@ export default function DeleteConfirm({ noteTitle, onConfirm, onCancel }: Props)
       >
         <div style={{ position: "absolute", top: -10, left: "50%", transform: "translateX(-50%)", width: 54, height: 20, background: theme.isDark ? "rgba(255,250,200,0.24)" : "rgba(255,253,200,0.66)", borderRadius: 3, boxShadow: "0 1px 4px rgba(0,0,0,0.12)" }} />
         <p style={{ margin: "0 0 8px", fontWeight: 850, fontSize: 18, color: text }}>
-          Delete this note?
+          Delete this {itemType}?
         </p>
         <p style={{ margin: "0 0 26px", fontSize: 13, lineHeight: 1.55, color: text, opacity: 0.72 }}>
-          {noteTitle ? `"${noteTitle}"` : "This note"} will be permanently removed.
+          {detail ?? `${noteTitle ? `"${noteTitle}"` : `This ${itemType}`} will be permanently removed.`}
         </p>
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
           <button

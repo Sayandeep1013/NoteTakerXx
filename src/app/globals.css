@@ -2,13 +2,13 @@
 
 /* Base CSS vars — overridden at runtime by ThemeSync */
 :root {
-  --bg-canvas:      #f0ede8;
-  --bg-sidebar:     rgba(255,252,248,0.75);
-  --sidebar-border: rgba(0,0,0,0.14);
+  --bg-canvas:      #d8bd91;
+  --bg-sidebar:     #fffaf4;
+  --sidebar-border: #9f7a4e;
   --text-ui:        #1a1a1a;
   --text-muted:     rgba(26,26,26,0.42);
-  --accent:         #5c6bc0;
-  --btn-hover:      rgba(0,0,0,0.055);
+  --accent:         #6f54b7;
+  --btn-hover:      rgba(111,84,183,0.12);
 }
 
 * { box-sizing: border-box; }

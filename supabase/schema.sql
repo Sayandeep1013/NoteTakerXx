@@ -16,6 +16,12 @@ create table if not exists public.notes (
   title       text        not null default '',
   body        text        not null default '',
   font_size   integer     not null default 13,
+  type        text        not null default 'note' check (type in ('note', 'folder', 'photo')),
+  parent_id   uuid        references public.notes(id) on delete cascade,
+  folder_name text,
+  image_url   text,
+  image_path  text,
+  caption     text,
   badges      text[]      not null default '{}',
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now()
@@ -24,16 +30,27 @@ create table if not exists public.notes (
 -- If table already exists, add the badges column:
 -- ALTER TABLE public.notes ADD COLUMN IF NOT EXISTS badges text[] NOT NULL DEFAULT '{}';
 -- ALTER TABLE public.notes ADD COLUMN IF NOT EXISTS font_size integer NOT NULL DEFAULT 13;
+alter table public.notes add column if not exists type text not null default 'note';
+alter table public.notes add column if not exists parent_id uuid references public.notes(id) on delete cascade;
+alter table public.notes add column if not exists folder_name text;
+alter table public.notes add column if not exists image_url text;
+alter table public.notes add column if not exists image_path text;
+alter table public.notes add column if not exists caption text;
 
 create or replace function public.handle_updated_at()
 returns trigger language plpgsql as $$
 begin new.updated_at = now(); return new; end; $$;
 
+drop trigger if exists notes_updated_at on public.notes;
 create trigger notes_updated_at
   before update on public.notes
   for each row execute procedure public.handle_updated_at();
 
 alter table public.notes enable row level security;
+drop policy if exists "select own notes" on public.notes;
+drop policy if exists "insert own notes" on public.notes;
+drop policy if exists "update own notes" on public.notes;
+drop policy if exists "delete own notes" on public.notes;
 create policy "select own notes"  on public.notes for select  using (auth.uid() = user_id);
 create policy "insert own notes"  on public.notes for insert  with check (auth.uid() = user_id);
 create policy "update own notes"  on public.notes for update  using (auth.uid() = user_id);
@@ -54,6 +71,9 @@ alter table public.profiles add column if not exists theme text;
 alter table public.profiles add column if not exists custom_badges jsonb not null default '[]'::jsonb;
 
 alter table public.profiles enable row level security;
+drop policy if exists "profiles viewable by all" on public.profiles;
+drop policy if exists "users insert own profile" on public.profiles;
+drop policy if exists "users update own profile" on public.profiles;
 create policy "profiles viewable by all"     on public.profiles for select  using (true);
 create policy "users insert own profile"     on public.profiles for insert  with check (auth.uid() = id);
 create policy "users update own profile"     on public.profiles for update  using (auth.uid() = id);
@@ -76,13 +96,40 @@ insert into storage.buckets (id, name, public)
 values ('avatars', 'avatars', true)
 on conflict (id) do nothing;
 
+drop policy if exists "avatars publicly readable" on storage.objects;
 create policy "avatars publicly readable"
   on storage.objects for select using (bucket_id = 'avatars');
 
+drop policy if exists "authenticated users upload avatars" on storage.objects;
 create policy "authenticated users upload avatars"
   on storage.objects for insert
   with check (bucket_id = 'avatars' and auth.uid() is not null);
 
+drop policy if exists "users update own avatar" on storage.objects;
 create policy "users update own avatar"
   on storage.objects for update
   using (bucket_id = 'avatars' and auth.uid()::text = (storage.foldername(name))[1]);
+
+-- Photo uploads
+insert into storage.buckets (id, name, public)
+values ('photos', 'photos', true)
+on conflict (id) do nothing;
+
+drop policy if exists "photos publicly readable" on storage.objects;
+create policy "photos publicly readable"
+  on storage.objects for select using (bucket_id = 'photos');
+
+drop policy if exists "authenticated users upload photos" on storage.objects;
+create policy "authenticated users upload photos"
+  on storage.objects for insert
+  with check (bucket_id = 'photos' and auth.uid()::text = (storage.foldername(name))[1]);
+
+drop policy if exists "users update own photos" on storage.objects;
+create policy "users update own photos"
+  on storage.objects for update
+  using (bucket_id = 'photos' and auth.uid()::text = (storage.foldername(name))[1]);
+
+drop policy if exists "users delete own photos" on storage.objects;
+create policy "users delete own photos"
+  on storage.objects for delete
+  using (bucket_id = 'photos' and auth.uid()::text = (storage.foldername(name))[1]);

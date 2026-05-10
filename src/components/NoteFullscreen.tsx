@@ -159,7 +159,6 @@ export default function NoteFullscreen({ note, theme, originX, originY, originW,
       style={{
         position: "fixed", inset: 0,
         background: isDark ? "rgba(0,0,0,0.65)" : "rgba(0,0,0,0.42)",
-        backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)",
         zIndex: 800,
         opacity: phase === "visible" ? 1 : 0,
         transition: "opacity 300ms ease",

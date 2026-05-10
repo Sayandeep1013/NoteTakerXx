@@ -35,12 +35,12 @@ export interface ThemeConfig {
 export const THEMES: Record<ThemeName, ThemeConfig> = {
 
   paper: {
-    name: "paper", label: "Paper", swatch: "#f0ede8", isDark: false,
-    canvasBg: "#f0ede8",
-    sidebarBg: "rgba(255,252,248,0.75)",
-    sidebarBorder: "rgba(0,0,0,0.14)",
+    name: "paper", label: "Paper", swatch: "#d8bd91", isDark: false,
+    canvasBg: "#d8bd91",
+    sidebarBg: "#fffaf4",
+    sidebarBorder: "#9f7a4e",
     textUi: "#1a1a1a", textMuted: "rgba(26,26,26,0.42)",
-    accent: "#5c6bc0", btnHover: "rgba(0,0,0,0.055)",
+    accent: "#6f54b7", btnHover: "rgba(111,84,183,0.12)",
     noteColors: {
       yellow:   "#fff176", pink:     "#f48fb1",
       mint:     "#80cbc4", lavender: "#b39ddb",
@@ -48,22 +48,22 @@ export const THEMES: Record<ThemeName, ThemeConfig> = {
       lilac:    "#ce93d8", sage:     "#a5d6a7",
     },
     noteText: "#111111", notePlaceholder: "rgba(17,17,17,0.32)",
-    dotBase: [55, 45, 75, 0.22], dotHot: [40, 30, 140, 0.78],
+    dotBase: [98, 67, 36, 0.25], dotHot: [100, 72, 160, 0.82],
   },
 
   // Cork: warm mid-tone brown wall — notes are creamy warm naturals
   cork: {
-    name: "cork", label: "Cork Board", swatch: "#b8945a", isDark: false,
-    canvasBg: "#c4a070",
-    sidebarBg: "rgba(160,118,70,0.82)",
-    sidebarBorder: "rgba(255,240,210,0.25)",
+    name: "cork", label: "Cork Board", swatch: "#f0ede8", isDark: false,
+    canvasBg: "#f0ede8",
+    sidebarBg: "#ffe8c7",
+    sidebarBorder: "#c98652",
     textUi: "#2e1e0a", textMuted: "rgba(46,30,10,0.45)",
-    accent: "#7a4e1e", btnHover: "rgba(0,0,0,0.08)",
+    accent: "#c96a86", btnHover: "rgba(201,106,134,0.13)",
     noteColors: {
-      yellow:   "#fff8d0", pink:     "#f8d8c0",
-      mint:     "#d0e8c0", lavender: "#e8d4c8",
-      peach:    "#f5ddb0", sky:      "#c8dce8",
-      lilac:    "#eed0dc", sage:     "#cce0b8",
+      yellow:   "#fff176", pink:     "#f48fb1",
+      mint:     "#80cbc4", lavender: "#b39ddb",
+      peach:    "#ffab91", sky:      "#81d4fa",
+      lilac:    "#ce93d8", sage:     "#a5d6a7",
     },
     noteText: "#2e1e0a", notePlaceholder: "rgba(46,30,10,0.30)",
     dotBase: [80, 50, 20, 0.28], dotHot: [160, 90, 20, 0.82],
@@ -73,10 +73,10 @@ export const THEMES: Record<ThemeName, ThemeConfig> = {
   slate: {
     name: "slate", label: "Slate", swatch: "#2b2b32", isDark: true,
     canvasBg: "#2b2b32",
-    sidebarBg: "rgba(20,20,24,0.88)",
-    sidebarBorder: "rgba(235,220,190,0.14)",
+    sidebarBg: "#2a2520",
+    sidebarBorder: "#6b563e",
     textUi: "#ece4d4", textMuted: "rgba(236,228,212,0.44)",
-    accent: "#d39a4a", btnHover: "rgba(255,226,184,0.08)",
+    accent: "#c96a86", btnHover: "rgba(201,106,134,0.13)",
     noteColors: {
       yellow:   "#d7b84f", pink:     "#c96a86",
       mint:     "#4aa28b", lavender: "#8567c8",
@@ -91,10 +91,10 @@ export const THEMES: Record<ThemeName, ThemeConfig> = {
   midnight: {
     name: "midnight", label: "Midnight", swatch: "#07091a", isDark: true,
     canvasBg: "#080c1c",
-    sidebarBg: "rgba(4,6,18,0.90)",
-    sidebarBorder: "rgba(80,120,255,0.18)",
+    sidebarBg: "#121421",
+    sidebarBorder: "#4f8fc0",
     textUi: "#b8cce8", textMuted: "rgba(184,204,232,0.40)",
-    accent: "#4fc3f7", btnHover: "rgba(79,195,247,0.08)",
+    accent: "#d39a4a", btnHover: "rgba(211,154,74,0.14)",
     noteColors: {
       yellow:   "#c8940e", pink:     "#b8185a",
       mint:     "#0d7060", lavender: "#4828a0",
@@ -109,10 +109,10 @@ export const THEMES: Record<ThemeName, ThemeConfig> = {
   forest: {
     name: "forest", label: "Forest", swatch: "#162814", isDark: true,
     canvasBg: "#172a16",
-    sidebarBg: "rgba(10,20,10,0.90)",
-    sidebarBorder: "rgba(120,200,100,0.15)",
+    sidebarBg: "#1b251a",
+    sidebarBorder: "#8050c0",
     textUi: "#cce8c4", textMuted: "rgba(204,232,196,0.40)",
-    accent: "#70c855", btnHover: "rgba(112,200,85,0.10)",
+    accent: "#c86030", btnHover: "rgba(200,96,48,0.14)",
     noteColors: {
       yellow:   "#d4aa1c",  // warm gold — triadic complement to green
       pink:     "#c84868",  // warm rose
@@ -131,10 +131,10 @@ export const THEMES: Record<ThemeName, ThemeConfig> = {
   dusk: {
     name: "dusk", label: "Dusk", swatch: "#281535", isDark: true,
     canvasBg: "#241230",
-    sidebarBg: "rgba(16,8,24,0.90)",
-    sidebarBorder: "rgba(200,120,240,0.15)",
+    sidebarBg: "#24182a",
+    sidebarBorder: "#c89828",
     textUi: "#e8d0f4", textMuted: "rgba(232,208,244,0.40)",
-    accent: "#c078e8", btnHover: "rgba(192,120,232,0.10)",
+    accent: "#3888c0", btnHover: "rgba(56,136,192,0.14)",
     noteColors: {
       yellow:   "#c89828",  // warm amber — analogous warm
       pink:     "#c84870",  // warm rose

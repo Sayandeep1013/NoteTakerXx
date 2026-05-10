@@ -54,6 +54,7 @@ export default function Note({ note, gridUnit: G }: Props) {
     connectionMode, setConnectionMode, addConnection,
     setFocusedNoteId, pendingInsert, setPendingInsert,
     highlightedNoteId, setHighlightedNoteId,
+    selectedItemIds, toggleSelectedItem, moveItemsByGrid, selectionMode,
   } = useNotesStore();
   const panX = useNotesStore((s) => s.canvas.panX);
   const panY = useNotesStore((s) => s.canvas.panY);
@@ -247,7 +248,20 @@ export default function Note({ note, gridUnit: G }: Props) {
     {
       onDragStart: () => { if (note.locked || isEditing) return; bringToFront(note.id); setIsDragging(true); dragStart.current = { pixelX: note.x * G, pixelY: note.y * G }; },
       onDrag: ({ movement: [mx, my] }) => { if (note.locked || isEditing) return; setDragPos({ x: dragStart.current.pixelX + mx, y: dragStart.current.pixelY + my }); },
-      onDragEnd: ({ movement: [mx, my] }) => { if (note.locked || isEditing) return; updateNote(note.id, { x: Math.round((dragStart.current.pixelX + mx) / G), y: Math.round((dragStart.current.pixelY + my) / G) }); setDragPos(null); setIsDragging(false); },
+      onDragEnd: ({ movement: [mx, my] }) => {
+        if (note.locked || isEditing) return;
+        const nextX = Math.round((dragStart.current.pixelX + mx) / G);
+        const nextY = Math.round((dragStart.current.pixelY + my) / G);
+        const dx = nextX - note.x;
+        const dy = nextY - note.y;
+        if (selectedItemIds.includes(note.id) && selectedItemIds.length > 1) {
+          moveItemsByGrid(selectedItemIds, dx, dy);
+        } else {
+          updateNote(note.id, { x: nextX, y: nextY });
+        }
+        setDragPos(null);
+        setIsDragging(false);
+      },
     },
     { drag: { filterTaps: true } }
   );
@@ -287,6 +301,7 @@ export default function Note({ note, gridUnit: G }: Props) {
 
   const isConnectionSource = connectionMode === note.id;
   const isHighlighted = highlightedNoteId === note.id;
+  const isSelected = selectedItemIds.includes(note.id);
 
   useEffect(() => {
     if (!isHighlighted) return;
@@ -296,6 +311,10 @@ export default function Note({ note, gridUnit: G }: Props) {
 
   const handlePointerDown = (e: React.PointerEvent) => {
     e.stopPropagation();
+    if (selectionMode === "import" || e.ctrlKey || e.metaKey) {
+      toggleSelectedItem(note.id);
+      return;
+    }
     if (badgeMode) { toggleNoteBadge(note.id, badgeMode); setBadgeMode(null); return; }
     if (e.shiftKey) {
       if (connectionMode && connectionMode !== note.id) { addConnection(connectionMode, note.id); setConnectionMode(null); }
@@ -320,6 +339,8 @@ export default function Note({ note, gridUnit: G }: Props) {
           transition: "transform 200ms ease, box-shadow 200ms ease",
           zIndex: note.zIndex, overflow: "visible", pointerEvents: "auto",
           boxShadow: shadow, cursor: isDragging ? "grabbing" : "default",
+          outline: isSelected ? "2.5px dashed var(--accent)" : undefined,
+          outlineOffset: isSelected ? 6 : undefined,
         }}
       >
         {/* Noise + tape */}
@@ -345,7 +366,7 @@ export default function Note({ note, gridUnit: G }: Props) {
           <Dot color="#ff453a" title="Delete" onClick={() => setShowDelete(true)} extraStyle={{ opacity: hovered ? 1 : 0.45, transition: "opacity 200ms" }}>{hovered && <TrashIcon />}</Dot>
         </div>
 
-        {isHighlighted && <NoteSpotlight />}
+        {(isHighlighted || isSelected) && <NoteSpotlight />}
 
         {/* ── Content ── */}
         {isEditing ? (
@@ -442,7 +463,7 @@ export default function Note({ note, gridUnit: G }: Props) {
       </div>
 
       {/* Portals */}
-      {contextMenu && createPortal(<NoteContextMenu x={contextMenu.x} y={contextMenu.y} noteId={note.id} noteBadges={note.badges} onEdit={() => enterEdit("title")} onDelete={() => setShowDelete(true)} onClose={() => setContextMenu(null)} />, document.body)}
+      {contextMenu && createPortal(<NoteContextMenu x={contextMenu.x} y={contextMenu.y} noteId={note.id} noteBadges={note.badges} itemType={note.type} onEdit={() => enterEdit("title")} onDelete={() => setShowDelete(true)} onClose={() => setContextMenu(null)} />, document.body)}
       {isFullscreen && createPortal(<NoteFullscreen note={note} theme={theme} originX={originX} originY={originY} originW={visualW} originH={visualH} onClose={() => setIsFullscreen(false)} />, document.body)}
       {showDelete && createPortal(<DeleteConfirm noteTitle={note.title} onConfirm={() => { deleteNote(note.id); setShowDelete(false); }} onCancel={() => setShowDelete(false)} />, document.body)}
     </>

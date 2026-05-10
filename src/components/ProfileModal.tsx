@@ -27,6 +27,7 @@ export default function ProfileModal({ user, onClose }: Props) {
   const { signOut } = useAuth();
   const notes  = useNotesStore((s) => s.notes);
   const setPan = useNotesStore((s) => s.setPan);
+  const setActiveFolderId = useNotesStore((s) => s.setActiveFolderId);
   const bringToFront = useNotesStore((s) => s.bringToFront);
   const setHighlightedNoteId = useNotesStore((s) => s.setHighlightedNoteId);
   const customBadges = useNotesStore((s) => s.customBadges);
@@ -85,6 +86,7 @@ export default function ProfileModal({ user, onClose }: Props) {
     const vh = window.innerHeight;
     const cx = n.x * G + n.w * G / 2;
     const cy = n.y * G + n.h * G / 2;
+    setActiveFolderId(n.parentId ?? null);
     setPan(vw / 2 - cx, vh / 2 - cy);
     bringToFront(n.id);
     setHighlightedNoteId(n.id);
@@ -94,7 +96,7 @@ export default function ProfileModal({ user, onClose }: Props) {
   const sorted = [...notes]
     .filter((n) => {
       const q = search.toLowerCase();
-      return !q || n.title.toLowerCase().includes(q) || n.body.toLowerCase().includes(q);
+      return !q || itemLabel(n).toLowerCase().includes(q) || n.body.toLowerCase().includes(q) || (n.caption ?? "").toLowerCase().includes(q);
     })
     .filter((n) => !badgeFilter || n.badges.includes(badgeFilter))
     .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
@@ -111,14 +113,13 @@ export default function ProfileModal({ user, onClose }: Props) {
   // Theme tokens
   const paper = theme.noteColors[paperColor] ?? theme.noteColors.yellow;
   const line = isDark ? "rgba(0,0,0,0.20)" : "rgba(0,0,0,0.085)";
-  const glass2  = isDark ? "rgba(0,0,0,0.12)" : "rgba(255,255,255,0.22)";
   const bdr     = isDark ? "rgba(0,0,0,0.22)" : "rgba(0,0,0,0.10)";
   const text    = theme.noteText;
   const muted   = isDark ? "rgba(240,234,216,0.58)" : "rgba(26,26,26,0.52)";
-  const inp     = isDark ? "rgba(0,0,0,0.16)" : "rgba(255,255,255,0.26)";
-  const frosted = isDark ? "rgba(18,18,22,0.24)" : "rgba(255,255,255,0.40)";
-  const frostedStrong = isDark ? "rgba(18,18,22,0.34)" : "rgba(255,255,255,0.54)";
-  const frostedBorder = isDark ? "rgba(255,245,220,0.14)" : "rgba(0,0,0,0.12)";
+  const inp     = isDark ? "#111119" : "#fffdf8";
+  const panelBg = theme.sidebarBg;
+  const panelBgStrong = isDark ? "#2b2b36" : "#fffdf8";
+  const panelBorder = isDark ? "#3a3a46" : "#d8c8b9";
 
   return (
     <div
@@ -126,8 +127,6 @@ export default function ProfileModal({ user, onClose }: Props) {
       style={{
         position: "fixed", inset: 0,
         background: isDark ? "rgba(0,0,0,0.62)" : "rgba(20,18,24,0.34)",
-        backdropFilter: "blur(8px)",
-        WebkitBackdropFilter: "blur(8px)",
         zIndex: 400,
         display: "flex", alignItems: "center", justifyContent: "center",
       }}
@@ -167,7 +166,6 @@ export default function ProfileModal({ user, onClose }: Props) {
         <div style={{
           width: 260, flexShrink: 0,
           display: "flex", flexDirection: "column",
-          background: glass2,
           borderRight: `1px solid ${bdr}`,
           borderTopLeftRadius: 16,
           borderBottomLeftRadius: 16,
@@ -180,18 +178,19 @@ export default function ProfileModal({ user, onClose }: Props) {
               <button
                 onClick={() => fileRef.current?.click()}
                 style={{
-                  width: 80, height: 80, borderRadius: "50%", padding: 0,
-                  background: avatarUrl ? "transparent" : `linear-gradient(135deg, ${theme.accent}dd, ${theme.accent}77)`,
-                  border: `2.5px solid ${bdr}`,
+                  width: 88, height: 106, borderRadius: 8, padding: "8px 8px 24px",
+                  background: "#fff",
+                  border: `1px solid ${bdr}`,
                   cursor: "pointer", overflow: "hidden",
                   display: "flex", alignItems: "center", justifyContent: "center",
                   fontSize: 30, color: "#fff", fontWeight: 700,
                   boxShadow: `0 4px 20px ${theme.accent}44`,
+                  transform: "rotate(-2deg)",
                 }}
               >
                 {avatarUrl
-                  ? <img src={avatarUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="" />
-                  : initial
+                  ? <img src={avatarUrl} style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 3 }} alt="" />
+                  : <span style={{ width: "100%", height: "100%", borderRadius: 3, background: `linear-gradient(135deg, ${theme.accent}dd, ${theme.accent}77)`, display: "grid", placeItems: "center" }}>{initial}</span>
                 }
               </button>
               {/* Camera badge */}
@@ -233,11 +232,11 @@ export default function ProfileModal({ user, onClose }: Props) {
                 </div>
               </div>
             ) : (
-              <div style={{ textAlign: "center" }}>
+              <div style={{ textAlign: "center", background: panelBg, border: `1px solid ${panelBorder}`, borderRadius: 10, padding: "6px 8px", width: "100%" }}>
                 <button
                   onClick={() => setEditingName(true)}
                   title="Click to edit name"
-                  style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 6px", borderRadius: 6 }}
+                  style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 6px", borderRadius: 6, maxWidth: "100%" }}
                 >
                   <div style={{ fontSize: 17, fontWeight: 700, color: text, letterSpacing: "-0.02em" }}>
                     {username || <span style={{ opacity: 0.32 }}>Add name</span>}
@@ -257,9 +256,7 @@ export default function ProfileModal({ user, onClose }: Props) {
               <div key={label} style={{
                 display: "flex", justifyContent: "space-between", alignItems: "center",
                 padding: "8px 12px", borderRadius: 9,
-                background: frosted, border: `1px solid ${frostedBorder}`,
-                backdropFilter: "blur(10px)",
-                WebkitBackdropFilter: "blur(10px)",
+                background: panelBg, border: `1px solid ${panelBorder}`,
               }}>
                 <span style={{ fontSize: 12, color: muted }}>{label}</span>
                 <span style={{ fontSize: 13, fontWeight: 600, color: text }}>{value}</span>
@@ -271,10 +268,8 @@ export default function ProfileModal({ user, onClose }: Props) {
             marginTop: 8,
             padding: "9px 12px",
             borderRadius: 9,
-            background: frosted,
-            border: `1px solid ${frostedBorder}`,
-            backdropFilter: "blur(10px)",
-            WebkitBackdropFilter: "blur(10px)",
+            background: panelBg,
+            border: `1px solid ${panelBorder}`,
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
@@ -289,8 +284,8 @@ export default function ProfileModal({ user, onClose }: Props) {
                 width: 34,
                 height: 30,
                 borderRadius: 10,
-                border: `1px solid ${coffeeVisible ? theme.accent : frostedBorder}`,
-                background: coffeeVisible ? `${theme.accent}26` : frosted,
+                border: `1px solid ${coffeeVisible ? theme.accent : panelBorder}`,
+                background: coffeeVisible ? `${theme.accent}26` : panelBg,
                 cursor: "pointer",
                 display: "flex",
                 alignItems: "center",
@@ -312,7 +307,7 @@ export default function ProfileModal({ user, onClose }: Props) {
             onClick={handleSignOut}
             style={{
               width: "100%", padding: "9px 0", borderRadius: 9,
-              background: "transparent", border: `1px solid ${bdr}`,
+              background: panelBg, border: `1px solid ${panelBorder}`,
               color: isDark ? "rgba(240,90,90,0.85)" : "#c83333",
               cursor: "pointer", fontSize: 13, fontFamily: "inherit",
               display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
@@ -323,8 +318,8 @@ export default function ProfileModal({ user, onClose }: Props) {
               (e.currentTarget as HTMLElement).style.borderColor = "rgba(200,50,50,0.3)";
             }}
             onMouseLeave={(e) => {
-              (e.currentTarget as HTMLElement).style.background = "transparent";
-              (e.currentTarget as HTMLElement).style.borderColor = bdr;
+              (e.currentTarget as HTMLElement).style.background = panelBg;
+              (e.currentTarget as HTMLElement).style.borderColor = panelBorder;
             }}
           >
             <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
@@ -339,8 +334,8 @@ export default function ProfileModal({ user, onClose }: Props) {
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", borderTopRightRadius: 16, borderBottomRightRadius: 16 }}>
           {/* Search bar */}
           <div style={{ padding: "24px 24px 14px", flexShrink: 0 }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: text, marginBottom: 12 }}>
-              All notes <span style={{ fontWeight: 400, fontSize: 12, color: muted, marginLeft: 4 }}>{notes.length}</span>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 15, fontWeight: 700, color: text, marginBottom: 12, background: panelBg, border: `1px solid ${panelBorder}`, borderRadius: 10, padding: "6px 10px" }}>
+              All items <span style={{ fontWeight: 400, fontSize: 12, color: muted, marginLeft: 4 }}>{notes.length}</span>
             </div>
             <div style={{ display: "flex", gap: 8 }}>
               <div style={{ position: "relative", flex: 1 }}>
@@ -354,10 +349,8 @@ export default function ProfileModal({ user, onClose }: Props) {
                   placeholder="Search notes..."
                   style={{
                     width: "100%", padding: "8px 10px 8px 30px",
-                    borderRadius: 10, background: frosted,
-                    border: `1px solid ${frostedBorder}`,
-                    backdropFilter: "blur(10px)",
-                    WebkitBackdropFilter: "blur(10px)",
+                    borderRadius: 10, background: panelBg,
+                    border: `1px solid ${panelBorder}`,
                     color: text, fontSize: 13, fontFamily: "inherit", outline: "none",
                     boxSizing: "border-box",
                   }}
@@ -368,10 +361,8 @@ export default function ProfileModal({ user, onClose }: Props) {
                 title="Filter"
                 style={{
                   width: 34, height: 34, borderRadius: 10,
-                  background: badgeFilter ? `${theme.accent}22` : frosted,
-                  border: `1px solid ${badgeFilter ? theme.accent : frostedBorder}`,
-                  backdropFilter: "blur(10px)",
-                  WebkitBackdropFilter: "blur(10px)",
+                  background: badgeFilter ? `${theme.accent}22` : panelBg,
+                  border: `1px solid ${badgeFilter ? theme.accent : panelBorder}`,
                   color: text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
                 }}
               >
@@ -379,7 +370,7 @@ export default function ProfileModal({ user, onClose }: Props) {
               </button>
             </div>
             {filterOpen && (
-              <div style={{ marginTop: 8, padding: 9, borderRadius: 10, background: frosted, border: `1px solid ${frostedBorder}`, backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)" }}>
+              <div style={{ marginTop: 8, padding: 9, borderRadius: 10, background: panelBg, border: `1px solid ${panelBorder}` }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 7 }}>
                   <span style={{ fontSize: 11, fontWeight: 700, color: text }}>Filter by badge</span>
                   {badgeFilter && <button onClick={() => setBadgeFilter(null)} style={{ background: "transparent", border: "none", color: muted, fontSize: 11, cursor: "pointer" }}>Clear</button>}
@@ -414,7 +405,7 @@ export default function ProfileModal({ user, onClose }: Props) {
           <div style={{ flex: 1, overflow: "auto", padding: "0 16px 16px" }}>
             {sorted.length === 0 ? (
               <div style={{ textAlign: "center", marginTop: 60, color: muted, fontSize: 14 }}>
-                {search || badgeFilter ? "No notes match" : "No notes yet - click + to create one"}
+                {search || badgeFilter ? "No items match" : "No items yet - click + to create one"}
               </div>
             ) : sorted.map((n) => {
               const noteColor = theme.noteColors[n.color] ?? "#ccc";
@@ -424,20 +415,18 @@ export default function ProfileModal({ user, onClose }: Props) {
                   style={{
                     display: "flex", alignItems: "center", gap: 12,
                     padding: "9px 12px", borderRadius: 10, marginBottom: 8,
-                    background: frosted, cursor: "pointer",
+                    background: panelBg, cursor: "pointer",
                     transition: "background 100ms, border-color 100ms, box-shadow 100ms",
-                    border: `1px solid ${frostedBorder}`,
-                    backdropFilter: "blur(10px)",
-                    WebkitBackdropFilter: "blur(10px)",
+                    border: `1px solid ${panelBorder}`,
                     boxShadow: isDark ? "0 4px 14px rgba(0,0,0,0.10)" : "0 4px 14px rgba(0,0,0,0.05)",
                   }}
                   onMouseEnter={(e) => {
-                    (e.currentTarget as HTMLElement).style.background = frostedStrong;
+                    (e.currentTarget as HTMLElement).style.background = panelBgStrong;
                     (e.currentTarget as HTMLElement).style.borderColor = `${theme.accent}88`;
                   }}
                   onMouseLeave={(e) => {
-                    (e.currentTarget as HTMLElement).style.background = frosted;
-                    (e.currentTarget as HTMLElement).style.borderColor = frostedBorder;
+                    (e.currentTarget as HTMLElement).style.background = panelBg;
+                    (e.currentTarget as HTMLElement).style.borderColor = panelBorder;
                   }}
                   onClick={() => navigateToNote(n)}
                   title="Click to navigate to this note"
@@ -450,11 +439,11 @@ export default function ProfileModal({ user, onClose }: Props) {
                   }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 600, fontSize: 13, color: text, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis", lineHeight: 1.3 }}>
-                      {n.title || <span style={{ opacity: 0.3 }}>Untitled</span>}
+                      {itemLabel(n) || <span style={{ opacity: 0.3 }}>Untitled</span>}
                     </div>
-                    {n.body && (
+                    {(n.type === "photo" ? n.caption : n.body) && (
                       <div style={{ fontSize: 12, color: muted, marginTop: 2, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
-                        {n.body}
+                        {n.type === "photo" ? n.caption : n.body}
                       </div>
                     )}
                   </div>
@@ -517,4 +506,10 @@ function HandCrossIcon() {
       />
     </svg>
   );
+}
+
+function itemLabel(item: ReturnType<typeof useNotesStore.getState>["notes"][number]) {
+  if (item.type === "folder") return item.folderName || item.title || "Untitled Folder";
+  if (item.type === "photo") return item.caption || item.body || "Untitled Photo";
+  return item.title || item.body || "Untitled";
 }

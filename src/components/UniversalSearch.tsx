@@ -11,6 +11,7 @@ export default function UniversalSearch() {
   const setPan = useNotesStore((s) => s.setPan);
   const bringToFront = useNotesStore((s) => s.bringToFront);
   const setHighlightedNoteId = useNotesStore((s) => s.setHighlightedNoteId);
+  const setActiveFolderId = useNotesStore((s) => s.setActiveFolderId);
   const theme = useTheme();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -37,8 +38,8 @@ export default function UniversalSearch() {
     const q = query.trim().toLowerCase();
     const ranked = notes
       .map((note) => {
-        const title = note.title.trim() || "Untitled";
-        const body = note.body.trim();
+        const title = itemLabel(note);
+        const body = (note.body || note.caption || "").trim();
         const hayTitle = title.toLowerCase();
         const hayBody = body.toLowerCase();
         const score = !q
@@ -67,6 +68,7 @@ export default function UniversalSearch() {
   const goToNote = (note: typeof notes[number]) => {
     const cx = note.x * GRID + note.w * GRID / 2;
     const cy = note.y * GRID + note.h * GRID / 2;
+    setActiveFolderId(note.parentId ?? null);
     setPan(window.innerWidth / 2 - cx, window.innerHeight / 2 - cy);
     bringToFront(note.id);
     setHighlightedNoteId(note.id);
@@ -76,8 +78,8 @@ export default function UniversalSearch() {
   if (!open) return null;
 
   const isDark = theme.isDark;
-  const bg = isDark ? "rgba(18,18,22,0.86)" : "rgba(255,255,255,0.84)";
-  const border = isDark ? "rgba(255,255,255,0.18)" : "rgba(0,0,0,0.14)";
+  const bg = theme.sidebarBg;
+  const border = theme.sidebarBorder;
 
   return (
     <div
@@ -87,8 +89,6 @@ export default function UniversalSearch() {
         inset: 0,
         zIndex: 900,
         background: isDark ? "rgba(0,0,0,0.18)" : "rgba(20,18,24,0.10)",
-        backdropFilter: "blur(3px)",
-        WebkitBackdropFilter: "blur(3px)",
         display: "flex",
         alignItems: "flex-start",
         justifyContent: "center",
@@ -105,8 +105,6 @@ export default function UniversalSearch() {
           border: `1px solid ${border}`,
           boxShadow: isDark ? "0 28px 90px rgba(0,0,0,0.62)" : "0 28px 90px rgba(0,0,0,0.18)",
           overflow: "hidden",
-          backdropFilter: "blur(22px)",
-          WebkitBackdropFilter: "blur(22px)",
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 12, height: 58, padding: "0 18px", borderBottom: `1px solid ${border}` }}>
@@ -157,7 +155,7 @@ export default function UniversalSearch() {
               onMouseEnter={(e) => { e.currentTarget.style.background = "var(--btn-hover)"; }}
               onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
             >
-              <span style={{ width: 34, height: 34, borderRadius: 8, background: theme.noteColors[note.color], flexShrink: 0, boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.08)" }} />
+              <span style={{ width: 34, height: 34, borderRadius: note.type === "folder" ? 10 : 8, background: note.type === "photo" ? "#fff" : theme.noteColors[note.color], border: note.type === "photo" ? "5px solid #fff" : "none", flexShrink: 0, boxShadow: note.type === "photo" ? "0 2px 8px rgba(0,0,0,0.2)" : "inset 0 0 0 1px rgba(0,0,0,0.08)" }} />
               <span style={{ minWidth: 0, flex: 1 }}>
                 <span style={{ display: "block", fontSize: 14, fontWeight: 750, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>{title}</span>
                 <span style={{ display: "block", marginTop: 2, color: "var(--text-muted)", fontSize: 12, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
@@ -170,6 +168,12 @@ export default function UniversalSearch() {
       </div>
     </div>
   );
+}
+
+function itemLabel(note: ReturnType<typeof useNotesStore.getState>["notes"][number]) {
+  if (note.type === "folder") return note.folderName?.trim() || note.title.trim() || "Untitled Folder";
+  if (note.type === "photo") return note.caption?.trim() || note.body.trim() || "Untitled Photo";
+  return note.title.trim() || "Untitled";
 }
 
 function SearchGlyph() {

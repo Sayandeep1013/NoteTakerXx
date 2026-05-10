@@ -4,6 +4,8 @@ import { useRef, useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useNotesStore } from "@/store/notes";
 import Note from "./Note";
+import FolderItem from "./FolderItem";
+import PhotoItem from "./PhotoItem";
 import DotGrid from "./DotGrid";
 import Sidebar from "./Sidebar";
 import ResourceMonitor from "./ResourceMonitor";
@@ -15,19 +17,27 @@ import { NOTE_COLOR_KEYS, type NoteColor } from "@/lib/colors";
 import upiQr from "../../images/upi qr.jpeg";
 
 const SHOW_COFFEE_BUTTON = true;
+const ACTIVE_FOLDER_KEY = "nxtaker_active_folder_id";
+const FOLDER_PAN_KEY = "nxtaker_folder_pan";
 
 function randomNoteColor(): NoteColor {
   return NOTE_COLOR_KEYS[Math.floor(Math.random() * NOTE_COLOR_KEYS.length)];
 }
 
 export default function Canvas() {
-  const { notes, canvas, setPan, addNote, connectionMode, setConnectionMode, badgeFilter, coffeeVisible, setCoffeeVisible } = useNotesStore();
+  const {
+    notes, canvas, folderPan, setPan, addNote, connectionMode, setConnectionMode, badgeFilter,
+    coffeeVisible, setCoffeeVisible, activeFolderId, goToParentFolder, setActiveFolderId,
+    selectedItemIds, clearSelection, moveItemsToFolder, setSelectionMode,
+  } = useNotesStore();
   const surfaceRef = useRef<HTMLDivElement>(null);
   const panState = useRef({ active: false, startX: 0, startY: 0, panX: 0, panY: 0 });
   const panRef = useRef({ x: canvas.panX, y: canvas.panY });
   panRef.current = { x: canvas.panX, y: canvas.panY };
   const [cursor, setCursor] = useState<"default" | "grabbing">("default");
+  const [importTargetFolderId, setImportTargetFolderId] = useState<string | null>(null);
   const hudScale = useHudScale();
+  const activeFolder = activeFolderId ? notes.find((item) => item.id === activeFolderId) : null;
 
   // Load initial pan position
   useEffect(() => {
@@ -43,15 +53,49 @@ export default function Canvas() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(FOLDER_PAN_KEY);
+      if (!saved) return;
+      const parsed = JSON.parse(saved);
+      if (!parsed || typeof parsed !== "object") return;
+      useNotesStore.setState((state) => ({
+        folderPan: { ...state.folderPan, ...parsed },
+      }));
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    try {
+      const savedFolderId = localStorage.getItem(ACTIVE_FOLDER_KEY);
+      if (savedFolderId) setActiveFolderId(savedFolderId);
+    } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    try {
+      if (activeFolderId) localStorage.setItem(ACTIVE_FOLDER_KEY, activeFolderId);
+      else localStorage.removeItem(ACTIVE_FOLDER_KEY);
+    } catch {}
+  }, [activeFolderId]);
+
+  useEffect(() => {
+    if (!activeFolderId || notes.length === 0) return;
+    const folderExists = notes.some((item) => item.id === activeFolderId && item.type === "folder");
+    if (!folderExists) setActiveFolderId(null);
+  }, [activeFolderId, notes, setActiveFolderId]);
+
   // Save pan position when it changes (debounced)
   useEffect(() => {
     const timer = setTimeout(() => {
       try {
         localStorage.setItem("canvas-pan", JSON.stringify(canvas));
+        localStorage.setItem(FOLDER_PAN_KEY, JSON.stringify(folderPan));
       } catch {}
     }, 500);
     return () => clearTimeout(timer);
-  }, [canvas]);
+  }, [canvas, folderPan]);
 
   // Non-passive wheel to preventDefault and pan
   useEffect(() => {
@@ -73,10 +117,19 @@ export default function Canvas() {
     return () => window.removeEventListener("keydown", onKey);
   }, [connectionMode, setConnectionMode]);
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && selectedItemIds.length > 0 && !importTargetFolderId) clearSelection();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [clearSelection, importTargetFolderId, selectedItemIds.length]);
+
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     // Only activate pan on the backdrop (canvas-pan-layer), not on notes
     const target = e.target as HTMLElement;
     if (!target.classList.contains("canvas-pan-layer")) return;
+    if (!importTargetFolderId) clearSelection();
     panState.current = { active: true, startX: e.clientX, startY: e.clientY, panX: canvas.panX, panY: canvas.panY };
     (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
     setCursor("grabbing");
@@ -88,7 +141,11 @@ export default function Canvas() {
   };
 
   const onPointerUp = () => { panState.current.active = false; setCursor("default"); };
-  const visibleNotes = badgeFilter ? notes.filter((note) => note.badges.includes(badgeFilter)) : notes;
+  const visibleItems = notes.filter((item) => item.parentId === activeFolderId);
+  const visibleNotes = (badgeFilter ? visibleItems.filter((note) => note.badges.includes(badgeFilter)) : visibleItems)
+    .filter((item) => item.type === "note");
+  const visibleFolders = badgeFilter ? [] : visibleItems.filter((item) => item.type === "folder");
+  const visiblePhotos = badgeFilter ? visibleItems.filter((item) => item.type === "photo" && item.badges.includes(badgeFilter)) : visibleItems.filter((item) => item.type === "photo");
 
   return (
     <div
@@ -128,6 +185,12 @@ export default function Canvas() {
         <ConnectionLayer notes={visibleNotes} gridUnit={80} />
         {visibleNotes.map((note) => (
           <Note key={note.id} note={note} gridUnit={80} />
+        ))}
+        {visibleFolders.map((folder) => (
+          <FolderItem key={folder.id} folder={folder} items={notes} gridUnit={80} />
+        ))}
+        {visiblePhotos.map((photo) => (
+          <PhotoItem key={photo.id} photo={photo} gridUnit={80} />
         ))}
       </div>
 
@@ -185,14 +248,48 @@ export default function Canvas() {
 
       {SHOW_COFFEE_BUTTON && coffeeVisible && <CoffeeButton onHide={() => setCoffeeVisible(false)} />}
 
+      {activeFolderId && !importTargetFolderId && (
+        <FolderNavigation
+          title={activeFolder?.folderName ?? activeFolder?.title ?? "Folder"}
+          onBack={goToParentFolder}
+          onImport={() => {
+            const targetId = activeFolderId;
+            const parentId = activeFolder?.parentId ?? null;
+            clearSelection();
+            setImportTargetFolderId(targetId);
+            setSelectionMode("import");
+            setActiveFolderId(parentId);
+          }}
+        />
+      )}
+
+      {importTargetFolderId && (
+        <ImportBar
+          count={selectedItemIds.length}
+          onCancel={() => {
+            const target = importTargetFolderId;
+            clearSelection();
+            setSelectionMode("normal");
+            setImportTargetFolderId(null);
+            setActiveFolderId(target);
+          }}
+          onConfirm={() => {
+            const target = importTargetFolderId;
+            moveItemsToFolder(selectedItemIds, target);
+            setSelectionMode("normal");
+            setImportTargetFolderId(null);
+            setActiveFolderId(target);
+          }}
+        />
+      )}
+
       {/* Connection mode indicator */}
       {connectionMode && (
         <div
           onClick={() => setConnectionMode(null)}
           style={{
             position: "fixed", top: 16, left: "50%", transform: "translateX(-50%)",
-            background: "rgba(231,76,60,0.92)",
-            backdropFilter: "blur(12px)",
+            background: "#d84a42",
             color: "#fff", fontSize: 12, fontWeight: 600,
             padding: "7px 18px", borderRadius: 20,
             zIndex: 490, cursor: "pointer",
@@ -211,6 +308,54 @@ export default function Canvas() {
   );
 }
 
+function FolderNavigation({ title, onBack, onImport }: { title: string; onBack: () => void; onImport: () => void }) {
+  return (
+    <div style={{ position: "fixed", top: 16, left: 16, zIndex: 520, display: "flex", alignItems: "center", gap: 8 }}>
+      <button onClick={onBack} title="Back to parent canvas" style={navButtonStyle}>
+        <ArrowLeftIcon />
+      </button>
+      <div style={{ maxWidth: 260, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis", padding: "8px 12px", borderRadius: 999, background: "var(--bg-sidebar)", border: "1px solid var(--sidebar-border)", fontSize: 12, fontWeight: 800 }}>
+        {title}
+      </div>
+      <button onClick={onImport} title="Import items from parent canvas" style={navButtonStyle}>
+        <ImportIcon />
+      </button>
+    </div>
+  );
+}
+
+function ImportBar({ count, onCancel, onConfirm }: { count: number; onCancel: () => void; onConfirm: () => void }) {
+  return (
+    <div style={{ position: "fixed", top: 16, left: "50%", transform: "translateX(-50%)", zIndex: 540, display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 999, background: "#18181f", color: "#fff", boxShadow: "0 12px 42px rgba(0,0,0,0.28)" }}>
+      <span style={{ fontSize: 12, fontWeight: 700, padding: "0 8px" }}>{count} selected</span>
+      <button onClick={onCancel} title="Cancel import" style={{ ...navButtonStyle, background: "#2a2a34", color: "#fff", border: "1px solid #3a3a46" }}>
+        <CloseIcon />
+      </button>
+      <button onClick={onConfirm} disabled={count === 0} title="Import selected items" style={{ ...navButtonStyle, opacity: count === 0 ? 0.45 : 1, background: "#34c759", color: "#fff" }}>
+        <CheckIcon />
+      </button>
+    </div>
+  );
+}
+
+const navButtonStyle: React.CSSProperties = {
+  width: 38,
+  height: 38,
+  borderRadius: "50%",
+  border: "1px solid var(--sidebar-border)",
+  background: "var(--bg-sidebar)",
+  color: "var(--text-ui)",
+  cursor: "pointer",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+};
+
+function ArrowLeftIcon() { return <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M11 4L6 9l5 5M6.5 9H15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
+function ImportIcon() { return <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3.5 5.5h4l1.2 1.4h5.8v6.6a1 1 0 01-1 1h-10a1 1 0 01-1-1v-7a1 1 0 011-1z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/><path d="M9 12V8M7.3 9.7L9 8l1.7 1.7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
+function CheckIcon() { return <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3.7 9.5l3.2 3.1 7.2-7.2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
+function CloseIcon() { return <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M5 5l8 8M13 5l-8 8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>; }
+
 function CoffeeButton({ onHide }: { onHide: () => void }) {
   const theme = useTheme();
   const isDark = theme.isDark;
@@ -221,8 +366,8 @@ function CoffeeButton({ onHide }: { onHide: () => void }) {
   const line = isDark ? "rgba(0,0,0,0.20)" : "rgba(0,0,0,0.085)";
   const text = theme.noteText;
   const muted = isDark ? "rgba(240,234,216,0.62)" : "rgba(26,26,26,0.56)";
-  const frosted = isDark ? "rgba(18,18,22,0.24)" : "rgba(255,255,255,0.42)";
-  const frostedBorder = isDark ? "rgba(255,245,220,0.14)" : "rgba(0,0,0,0.12)";
+  const panelBg = isDark ? "#24242d" : "#fff8ee";
+  const panelBorder = isDark ? "#3a3a46" : "#d7c7b8";
 
   return (
     <>
@@ -241,11 +386,9 @@ function CoffeeButton({ onHide }: { onHide: () => void }) {
           height: 44,
           padding: 0,
           borderRadius: "50%",
-          border: "1px solid rgba(255,255,255,0.18)",
-          background: "rgba(18,18,22,0.78)",
-          backdropFilter: "blur(18px)",
-          WebkitBackdropFilter: "blur(18px)",
-          color: "#fff",
+          border: `1px solid ${theme.sidebarBorder}`,
+          background: theme.sidebarBg,
+          color: theme.textUi,
           fontSize: 13,
           fontWeight: 700,
           fontFamily: "inherit",
@@ -275,8 +418,6 @@ function CoffeeButton({ onHide }: { onHide: () => void }) {
             position: "fixed", inset: 0,
             zIndex: 700,
             background: isDark ? "rgba(0,0,0,0.58)" : "rgba(20,18,24,0.36)",
-            backdropFilter: "blur(8px)",
-            WebkitBackdropFilter: "blur(8px)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -317,10 +458,8 @@ function CoffeeButton({ onHide }: { onHide: () => void }) {
                 top: 10,
                 right: 12,
                 width: 26, height: 26, borderRadius: "50%",
-                border: `1px solid ${frostedBorder}`,
-                background: frosted,
-                backdropFilter: "blur(10px)",
-                WebkitBackdropFilter: "blur(10px)",
+                border: `1px solid ${panelBorder}`,
+                background: panelBg,
                 cursor: "pointer", color: muted,
                 fontSize: 16, lineHeight: "26px",
               }}
@@ -333,10 +472,8 @@ function CoffeeButton({ onHide }: { onHide: () => void }) {
               height: 220,
               margin: "0 auto 18px",
               borderRadius: 14,
-              background: frosted,
-              border: `1px solid ${frostedBorder}`,
-              backdropFilter: "blur(12px)",
-              WebkitBackdropFilter: "blur(12px)",
+              background: panelBg,
+              border: `1px solid ${panelBorder}`,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -361,10 +498,8 @@ function CoffeeButton({ onHide }: { onHide: () => void }) {
                 minHeight: 38,
                 padding: "6px 8px 6px 12px",
                 borderRadius: 10,
-                border: `1px solid ${frostedBorder}`,
-                background: frosted,
-                backdropFilter: "blur(10px)",
-                WebkitBackdropFilter: "blur(10px)",
+                border: `1px solid ${panelBorder}`,
+                background: panelBg,
                 color: text,
                 fontFamily: "inherit",
                 display: "flex",
@@ -401,8 +536,8 @@ function CoffeeButton({ onHide }: { onHide: () => void }) {
                     width: 30,
                     height: 28,
                     borderRadius: 9,
-                    border: `1px solid ${frostedBorder}`,
-                    background: frosted,
+                    border: `1px solid ${panelBorder}`,
+                    background: panelBg,
                     color: muted,
                     cursor: "pointer",
                     display: "flex",
