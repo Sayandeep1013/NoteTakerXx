@@ -58,6 +58,7 @@ export default function Note({ note, gridUnit: G }: Props) {
   } = useNotesStore();
   const panX = useNotesStore((s) => s.canvas.panX);
   const panY = useNotesStore((s) => s.canvas.panY);
+  const zoom = useNotesStore((s) => s.canvas.zoom || 1);
   const theme = useTheme();
   const isDark = theme.isDark;
 
@@ -74,6 +75,7 @@ export default function Note({ note, gridUnit: G }: Props) {
 
   const [editTitle, setEditTitle] = useState(note.title);
   const [editBody,  setEditBody]  = useState(note.body);
+  const [slashMenu, setSlashMenu] = useState<{ pos: number; top: number } | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const titleRef  = useRef<HTMLInputElement>(null);
   const bodyRef   = useRef<HTMLTextAreaElement>(null);
@@ -170,6 +172,23 @@ export default function Note({ note, gridUnit: G }: Props) {
   };
 
   // ── Smart Enter / Backspace in body textarea ──────────────────
+  const applySlashCommand = (prefix: string) => {
+    const ta = bodyRef.current;
+    if (!ta || !slashMenu) return;
+    const pos = slashMenu.pos;
+    const before = editBody.slice(0, pos);
+    const after = editBody.slice(editBody[pos] === "/" ? pos + 1 : pos);
+    const newText = before + prefix + after;
+    const nextPos = before.length + prefix.length;
+    setEditBody(newText);
+    scheduleEdit(editTitle, newText);
+    setSlashMenu(null);
+    setTimeout(() => {
+      ta.focus();
+      ta.setSelectionRange(nextPos, nextPos);
+    }, 0);
+  };
+
   const handleBodyKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const ta = e.currentTarget;
 
@@ -177,7 +196,20 @@ export default function Note({ note, gridUnit: G }: Props) {
     if ((e.ctrlKey || e.metaKey) && e.key === ".") { e.preventDefault(); insertPrefix("- ", ta); return; }
     if ((e.ctrlKey || e.metaKey) && e.key === "/") { e.preventDefault(); insertPrefix("[ ] ", ta); return; }
 
+    if (e.key === "/") {
+      const pos = ta.selectionStart;
+      const text = ta.value;
+      const lineStart = text.lastIndexOf("\n", pos - 1) + 1;
+      const currentLine = text.substring(lineStart, pos);
+      if (!currentLine.trim()) {
+        const lineIndex = text.slice(0, lineStart).split("\n").length - 1;
+        setTimeout(() => setSlashMenu({ pos, top: Math.min(ta.clientHeight - 10, 50 + lineIndex * lineStep) }), 0);
+      }
+      return;
+    }
+
     if (e.key === "Enter") {
+      setSlashMenu(null);
       const pos  = ta.selectionStart;
       const text = ta.value;
       const lineStart = text.lastIndexOf("\n", pos - 1) + 1;
@@ -210,6 +242,10 @@ export default function Note({ note, gridUnit: G }: Props) {
     }
 
     if (e.key === "Backspace") {
+      if (slashMenu) {
+        setSlashMenu(null);
+        return;
+      }
       const pos  = ta.selectionStart;
       const text = ta.value;
       if (ta.selectionStart !== ta.selectionEnd) return; // let browser handle selection delete
@@ -247,11 +283,11 @@ export default function Note({ note, gridUnit: G }: Props) {
   const bindDrag = useGesture(
     {
       onDragStart: () => { if (note.locked || isEditing) return; bringToFront(note.id); setIsDragging(true); dragStart.current = { pixelX: note.x * G, pixelY: note.y * G }; },
-      onDrag: ({ movement: [mx, my] }) => { if (note.locked || isEditing) return; setDragPos({ x: dragStart.current.pixelX + mx, y: dragStart.current.pixelY + my }); },
+      onDrag: ({ movement: [mx, my] }) => { if (note.locked || isEditing) return; setDragPos({ x: dragStart.current.pixelX + mx / zoom, y: dragStart.current.pixelY + my / zoom }); },
       onDragEnd: ({ movement: [mx, my] }) => {
         if (note.locked || isEditing) return;
-        const nextX = Math.round((dragStart.current.pixelX + mx) / G);
-        const nextY = Math.round((dragStart.current.pixelY + my) / G);
+        const nextX = Math.round((dragStart.current.pixelX + mx / zoom) / G);
+        const nextY = Math.round((dragStart.current.pixelY + my / zoom) / G);
         const dx = nextX - note.x;
         const dy = nextY - note.y;
         if (selectedItemIds.includes(note.id) && selectedItemIds.length > 1) {
@@ -282,8 +318,8 @@ export default function Note({ note, gridUnit: G }: Props) {
   const visualW = resizeDims?.w ?? note.w * G;
   const visualH = resizeDims?.h ?? note.h * G;
 
-  const originX = visualX + panX + visualW / 2;
-  const originY = visualY + panY + visualH / 2;
+  const originX = visualX * zoom + panX + (visualW * zoom) / 2;
+  const originY = visualY * zoom + panY + (visualH * zoom) / 2;
 
   const shadow = isDark
     ? hovered ? "0 12px 32px rgba(0,0,0,0.65)" : "0 4px 14px rgba(0,0,0,0.5)"
@@ -392,7 +428,11 @@ export default function Note({ note, gridUnit: G }: Props) {
               ref={bodyRef}
               value={editBody}
               placeholder="- bullet  |  1. numbered  |  [ ] todo  |  Ctrl+. bullet  |  Ctrl+/ todo"
-              onChange={(e) => { setEditBody(e.target.value); scheduleEdit(editTitle, e.target.value); }}
+              onChange={(e) => {
+                setEditBody(e.target.value);
+                scheduleEdit(editTitle, e.target.value);
+                if (slashMenu && e.target.value[slashMenu.pos] !== "/") setSlashMenu(null);
+              }}
               onBlur={(e) => {
                 if (e.relatedTarget === titleRef.current) return;
                 exitEdit();
@@ -406,6 +446,9 @@ export default function Note({ note, gridUnit: G }: Props) {
                 backgroundSize: `100% ${lineStep}px`,
               }}
             />
+            {slashMenu && (
+              <SlashCommandMenu top={slashMenu.top} onSelect={applySlashCommand} />
+            )}
           </div>
         ) : (
           <div style={{ height: visualH - 34, display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -455,16 +498,16 @@ export default function Note({ note, gridUnit: G }: Props) {
 
         {/* Visible handles */}
         {!note.locked && hovered && !isEditing && (
-          <VisibleResizeHandle note={note} G={G} accent={theme.accent} onPixelUpdate={setResizeDims} onGridCommit={(p) => { updateNote(note.id, p); setResizeDims(null); }} onStayHovered={onNoteEnter} />
+          <VisibleResizeHandle note={note} G={G} zoom={zoom} accent={theme.accent} onPixelUpdate={setResizeDims} onGridCommit={(p) => { updateNote(note.id, p); setResizeDims(null); }} onStayHovered={onNoteEnter} />
         )}
         {!note.locked && hovered && !isEditing && (
-          <RotationHandle note={note} G={G} panX={panX} panY={panY} accent={theme.accent} onRotate={(r) => updateNote(note.id, { rotation: r })} onStayHovered={onNoteEnter} />
+          <RotationHandle note={note} G={G} panX={panX} panY={panY} zoom={zoom} accent={theme.accent} onRotate={(r) => updateNote(note.id, { rotation: r })} onStayHovered={onNoteEnter} />
         )}
       </div>
 
       {/* Portals */}
-      {contextMenu && createPortal(<NoteContextMenu x={contextMenu.x} y={contextMenu.y} noteId={note.id} noteBadges={note.badges} itemType={note.type} onEdit={() => enterEdit("title")} onDelete={() => setShowDelete(true)} onClose={() => setContextMenu(null)} />, document.body)}
-      {isFullscreen && createPortal(<NoteFullscreen note={note} theme={theme} originX={originX} originY={originY} originW={visualW} originH={visualH} onClose={() => setIsFullscreen(false)} />, document.body)}
+      {contextMenu && createPortal(<NoteContextMenu x={contextMenu.x} y={contextMenu.y} noteId={note.id} noteBadges={note.badges} itemType="note" onEdit={() => enterEdit("title")} onDelete={() => setShowDelete(true)} onClose={() => setContextMenu(null)} />, document.body)}
+      {isFullscreen && createPortal(<NoteFullscreen note={note} theme={theme} originX={originX} originY={originY} originW={visualW * zoom} originH={visualH * zoom} onClose={() => setIsFullscreen(false)} />, document.body)}
       {showDelete && createPortal(<DeleteConfirm noteTitle={note.title} onConfirm={() => { deleteNote(note.id); setShowDelete(false); }} onCancel={() => setShowDelete(false)} />, document.body)}
     </>
   );
@@ -516,6 +559,60 @@ function BodyRenderer({ body, textColor, onToggle, fontSize }: { body: string; t
 }
 
 // ── Sub-components ───────────────────────────────────────────────
+
+function SlashCommandMenu({ top, onSelect }: { top: number; onSelect: (prefix: string) => void }) {
+  const commands = [
+    { label: "Bullet list", hint: "- item", prefix: "- " },
+    { label: "Numbered list", hint: "1. item", prefix: "1. " },
+    { label: "To-do", hint: "[ ] task", prefix: "[ ] " },
+  ];
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left: 10,
+        top,
+        width: 168,
+        zIndex: 80,
+        padding: 5,
+        borderRadius: 10,
+        background: "rgba(255,255,255,0.92)",
+        border: "1px solid rgba(0,0,0,0.14)",
+        boxShadow: "0 10px 28px rgba(0,0,0,0.18)",
+        backdropFilter: "blur(10px)",
+        fontFamily: "var(--font-geist-sans), system-ui, sans-serif",
+      }}
+      onPointerDown={(e) => e.stopPropagation()}
+    >
+      {commands.map((command) => (
+        <button
+          key={command.prefix}
+          onClick={() => onSelect(command.prefix)}
+          style={{
+            width: "100%",
+            border: "none",
+            background: "transparent",
+            borderRadius: 7,
+            padding: "7px 8px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+            cursor: "pointer",
+            color: "#222",
+            fontFamily: "inherit",
+            textAlign: "left",
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(92,107,192,0.12)"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+        >
+          <span style={{ fontSize: 12, fontWeight: 800 }}>{command.label}</span>
+          <span style={{ fontSize: 11, opacity: 0.55 }}>{command.hint}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
 
 function Dot({ color, title, onClick, children, extraStyle }: { color: string; title: string; onClick: () => void; children?: React.ReactNode; extraStyle?: React.CSSProperties }) {
   return (
@@ -572,14 +669,14 @@ function NoteSpotlight() {
   );
 }
 
-function VisibleResizeHandle({ note, G, accent, onPixelUpdate, onGridCommit, onStayHovered }: { note: NoteType; G: number; accent: string; onPixelUpdate: (d: { x: number; y: number; w: number; h: number }) => void; onGridCommit: (p: Partial<NoteType>) => void; onStayHovered: () => void }) {
+function VisibleResizeHandle({ note, G, zoom, accent, onPixelUpdate, onGridCommit, onStayHovered }: { note: NoteType; G: number; zoom: number; accent: string; onPixelUpdate: (d: { x: number; y: number; w: number; h: number }) => void; onGridCommit: (p: Partial<NoteType>) => void; onStayHovered: () => void }) {
   const start = useRef({ x: 0, y: 0, w: 0, h: 0 });
   const [active, setActive] = useState(false);
   const [live, setLive] = useState({ w: note.w, h: note.h });
   const bind = useGesture({
     onDragStart: () => { setActive(true); start.current = { x: note.x * G, y: note.y * G, w: note.w * G, h: note.h * G }; },
-    onDrag: ({ movement: [mx, my] }) => { const s = start.current; const min = 4*G; const nw=Math.max(min,s.w-mx),nh=Math.max(min,s.h+my); onPixelUpdate({ x: s.x+(s.w-nw), y: s.y, w: nw, h: nh }); setLive({ w: Math.round(nw/G), h: Math.round(nh/G) }); },
-    onDragEnd: ({ movement: [mx, my] }) => { const s = start.current; const min=4*G; const nw=Math.max(min,s.w-mx),nh=Math.max(min,s.h+my); onGridCommit({ x: Math.round((s.x+(s.w-nw))/G), y: Math.round(s.y/G), w: Math.max(4,Math.round(nw/G)), h: Math.max(4,Math.round(nh/G)) }); setActive(false); },
+    onDrag: ({ movement: [mx, my] }) => { const s = start.current; const dx = mx / zoom, dy = my / zoom; const min = 4*G; const nw=Math.max(min,s.w-dx),nh=Math.max(min,s.h+dy); onPixelUpdate({ x: s.x+(s.w-nw), y: s.y, w: nw, h: nh }); setLive({ w: Math.round(nw/G), h: Math.round(nh/G) }); },
+    onDragEnd: ({ movement: [mx, my] }) => { const s = start.current; const dx = mx / zoom, dy = my / zoom; const min=4*G; const nw=Math.max(min,s.w-dx),nh=Math.max(min,s.h+dy); onGridCommit({ x: Math.round((s.x+(s.w-nw))/G), y: Math.round(s.y/G), w: Math.max(4,Math.round(nw/G)), h: Math.max(4,Math.round(nh/G)) }); setActive(false); },
   }, { drag: { filterTaps: true } });
   return (
     <div {...bind()} onMouseEnter={onStayHovered} title="Drag to resize" style={{ position: "absolute", bottom: -36, left: -36, width: 36, height: 36, borderRadius: "50%", cursor: "sw-resize", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 20 }}>
@@ -591,12 +688,12 @@ function VisibleResizeHandle({ note, G, accent, onPixelUpdate, onGridCommit, onS
   );
 }
 
-function RotationHandle({ note, G, panX, panY, accent, onRotate, onStayHovered }: { note: NoteType; G: number; panX: number; panY: number; accent: string; onRotate: (r: number) => void; onStayHovered: () => void }) {
+function RotationHandle({ note, G, panX, panY, zoom, accent, onRotate, onStayHovered }: { note: NoteType; G: number; panX: number; panY: number; zoom: number; accent: string; onRotate: (r: number) => void; onStayHovered: () => void }) {
   const startRef = useRef({ startAngle: 0, startRotation: 0 });
   const [active, setActive] = useState(false);
   const [display, setDisplay] = useState(note.rotation);
-  const cx = () => note.x * G + note.w * G / 2 + panX;
-  const cy = () => note.y * G + note.h * G / 2 + panY;
+  const cx = () => (note.x * G + note.w * G / 2) * zoom + panX;
+  const cy = () => (note.y * G + note.h * G / 2) * zoom + panY;
   const bind = useGesture({
     onDragStart: ({ xy: [mx, my] }) => { setActive(true); startRef.current = { startAngle: Math.atan2(my-cy(), mx-cx()), startRotation: note.rotation }; },
     onDrag: ({ xy: [mx, my] }) => { const ca=Math.atan2(my-cy(),mx-cx()); const delta=(ca-startRef.current.startAngle)*(180/Math.PI); const raw=startRef.current.startRotation+delta; const n=((raw%360)+360)%360; const s=Math.round((n>180?n-360:n)*2)/2; setDisplay(s); onRotate(s); },

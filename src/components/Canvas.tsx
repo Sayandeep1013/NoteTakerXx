@@ -19,6 +19,8 @@ import upiQr from "../../images/upi qr.jpeg";
 const SHOW_COFFEE_BUTTON = true;
 const ACTIVE_FOLDER_KEY = "nxtaker_active_folder_id";
 const FOLDER_PAN_KEY = "nxtaker_folder_pan";
+const CANVAS_VIEW_KEY = "nxtaker_canvas_view";
+const ZOOM_STEP = 1.15;
 
 function randomNoteColor(): NoteColor {
   return NOTE_COLOR_KEYS[Math.floor(Math.random() * NOTE_COLOR_KEYS.length)];
@@ -26,27 +28,38 @@ function randomNoteColor(): NoteColor {
 
 export default function Canvas() {
   const {
-    notes, canvas, folderPan, setPan, addNote, connectionMode, setConnectionMode, badgeFilter,
+    notes, canvas, folderPan, setPan, setZoom, zoomBy, resetZoom, addNote, addStroke, connectionMode, setConnectionMode, badgeFilter,
     coffeeVisible, setCoffeeVisible, activeFolderId, goToParentFolder, setActiveFolderId,
     selectedItemIds, clearSelection, moveItemsToFolder, setSelectionMode,
+    drawingMode, strokeColor, setDrawingMode,
   } = useNotesStore();
   const surfaceRef = useRef<HTMLDivElement>(null);
   const panState = useRef({ active: false, startX: 0, startY: 0, panX: 0, panY: 0 });
-  const panRef = useRef({ x: canvas.panX, y: canvas.panY });
-  panRef.current = { x: canvas.panX, y: canvas.panY };
+  const panRef = useRef({ x: canvas.panX, y: canvas.panY, zoom: canvas.zoom || 1 });
+  panRef.current = { x: canvas.panX, y: canvas.panY, zoom: canvas.zoom || 1 };
+  const drawingRef = useRef<{ active: boolean; points: { x: number; y: number }[] }>({ active: false, points: [] });
+  const [liveStroke, setLiveStroke] = useState<{ x: number; y: number }[] | null>(null);
   const [cursor, setCursor] = useState<"default" | "grabbing">("default");
   const [importTargetFolderId, setImportTargetFolderId] = useState<string | null>(null);
   const hudScale = useHudScale();
   const activeFolder = activeFolderId ? notes.find((item) => item.id === activeFolderId) : null;
 
+  const screenToWorld = (clientX: number, clientY: number) => {
+    const { x, y, zoom } = panRef.current;
+    return { x: (clientX - x) / zoom, y: (clientY - y) / zoom };
+  };
+
   // Load initial pan position
   useEffect(() => {
     try {
-      const saved = localStorage.getItem("canvas-pan");
+      const saved = localStorage.getItem(CANVAS_VIEW_KEY) ?? localStorage.getItem("canvas-pan");
       if (saved) {
-        const { panX, panY } = JSON.parse(saved);
+        const { panX, panY, zoom } = JSON.parse(saved);
         if (typeof panX === "number" && typeof panY === "number") {
-          setPan(panX, panY);
+          useNotesStore.setState((state) => {
+            const canvas = { panX, panY, zoom: typeof zoom === "number" ? zoom : state.canvas.zoom || 1 };
+            return { canvas, folderPan: { ...state.folderPan, root: canvas } };
+          });
         }
       }
     } catch {}
@@ -59,9 +72,15 @@ export default function Canvas() {
       if (!saved) return;
       const parsed = JSON.parse(saved);
       if (!parsed || typeof parsed !== "object") return;
-      useNotesStore.setState((state) => ({
-        folderPan: { ...state.folderPan, ...parsed },
+      const normalized = Object.fromEntries(Object.entries(parsed).map(([key, value]) => {
+        const view = value as { panX?: number; panY?: number; zoom?: number };
+        return [key, {
+          panX: typeof view.panX === "number" ? view.panX : 320,
+          panY: typeof view.panY === "number" ? view.panY : 240,
+          zoom: typeof view.zoom === "number" ? view.zoom : 1,
+        }];
       }));
+      useNotesStore.setState((state) => ({ folderPan: { ...state.folderPan, ...normalized } }));
     } catch {}
   }, []);
 
@@ -91,6 +110,7 @@ export default function Canvas() {
     const timer = setTimeout(() => {
       try {
         localStorage.setItem("canvas-pan", JSON.stringify(canvas));
+        localStorage.setItem(CANVAS_VIEW_KEY, JSON.stringify(canvas));
         localStorage.setItem(FOLDER_PAN_KEY, JSON.stringify(folderPan));
       } catch {}
     }, 500);
@@ -103,12 +123,32 @@ export default function Canvas() {
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
+      if (e.ctrlKey || e.metaKey) {
+        const factor = e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
+        zoomBy(factor, { x: e.clientX, y: e.clientY });
+        return;
+      }
       setPan(panRef.current.x - e.deltaX, panRef.current.y - e.deltaY);
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [setPan, zoomBy]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const editing = target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.isContentEditable;
+      if (editing) return;
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod) return;
+      if (e.key === "+" || e.key === "=") { e.preventDefault(); zoomBy(ZOOM_STEP); }
+      if (e.key === "-") { e.preventDefault(); zoomBy(1 / ZOOM_STEP); }
+      if (e.key === "0") { e.preventDefault(); resetZoom(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [resetZoom, zoomBy]);
 
   // Escape cancels connection mode
   useEffect(() => {
@@ -129,6 +169,13 @@ export default function Canvas() {
     // Only activate pan on the backdrop (canvas-pan-layer), not on notes
     const target = e.target as HTMLElement;
     if (!target.classList.contains("canvas-pan-layer")) return;
+    if (drawingMode) {
+      const point = screenToWorld(e.clientX, e.clientY);
+      drawingRef.current = { active: true, points: [point] };
+      setLiveStroke([point]);
+      (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+      return;
+    }
     if (!importTargetFolderId) clearSelection();
     panState.current = { active: true, startX: e.clientX, startY: e.clientY, panX: canvas.panX, panY: canvas.panY };
     (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
@@ -136,22 +183,40 @@ export default function Canvas() {
   };
 
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (drawingRef.current.active) {
+      const point = screenToWorld(e.clientX, e.clientY);
+      const prev = drawingRef.current.points.at(-1);
+      if (!prev || Math.hypot(point.x - prev.x, point.y - prev.y) > 2) {
+        drawingRef.current.points = [...drawingRef.current.points, point];
+        setLiveStroke(drawingRef.current.points);
+      }
+      return;
+    }
     if (!panState.current.active) return;
     setPan(panState.current.panX + e.clientX - panState.current.startX, panState.current.panY + e.clientY - panState.current.startY);
   };
 
-  const onPointerUp = () => { panState.current.active = false; setCursor("default"); };
+  const onPointerUp = () => {
+    if (drawingRef.current.active) {
+      addStroke(drawingRef.current.points, strokeColor, 4);
+      drawingRef.current = { active: false, points: [] };
+      setLiveStroke(null);
+    }
+    panState.current.active = false;
+    setCursor("default");
+  };
   const visibleItems = notes.filter((item) => item.parentId === activeFolderId);
   const visibleNotes = (badgeFilter ? visibleItems.filter((note) => note.badges.includes(badgeFilter)) : visibleItems)
     .filter((item) => item.type === "note");
   const visibleFolders = badgeFilter ? [] : visibleItems.filter((item) => item.type === "folder");
   const visiblePhotos = badgeFilter ? visibleItems.filter((item) => item.type === "photo" && item.badges.includes(badgeFilter)) : visibleItems.filter((item) => item.type === "photo");
+  const visibleStrokes = badgeFilter ? [] : visibleItems.filter((item) => item.type === "stroke");
 
   return (
     <div
       ref={surfaceRef}
       className="canvas-surface"
-      style={{ cursor, userSelect: "none" }}
+      style={{ cursor: drawingMode ? "crosshair" : cursor, userSelect: "none" }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
@@ -180,9 +245,10 @@ export default function Canvas() {
       {/* World — pointer-events: none; notes re-enable with inline pointerEvents: auto */}
       <div
         className="canvas-world"
-        style={{ transform: `translate(${canvas.panX}px, ${canvas.panY}px)`, zIndex: 2 }}
+        style={{ transform: `translate(${canvas.panX}px, ${canvas.panY}px) scale(${canvas.zoom || 1})`, zIndex: 2 }}
       >
         <ConnectionLayer notes={visibleNotes} gridUnit={80} />
+        <StrokeLayer strokes={visibleStrokes} liveStroke={liveStroke} liveColor={strokeColor} />
         {visibleNotes.map((note) => (
           <Note key={note.id} note={note} gridUnit={80} />
         ))}
@@ -246,6 +312,15 @@ export default function Canvas() {
         </button>
       </div>
 
+      <ZoomHud
+        zoom={canvas.zoom || 1}
+        onZoomOut={() => zoomBy(1 / ZOOM_STEP)}
+        onZoomIn={() => zoomBy(ZOOM_STEP)}
+        onReset={resetZoom}
+        onDisableDrawing={() => setDrawingMode(false)}
+        drawingMode={drawingMode}
+      />
+
       {SHOW_COFFEE_BUTTON && coffeeVisible && <CoffeeButton onHide={() => setCoffeeVisible(false)} />}
 
       {activeFolderId && !importTargetFolderId && (
@@ -305,6 +380,197 @@ export default function Canvas() {
       <UniversalSearch />
       <ResourceMonitor />
     </div>
+  );
+}
+
+function StrokeLayer({
+  strokes,
+  liveStroke,
+  liveColor,
+}: {
+  strokes: ReturnType<typeof useNotesStore.getState>["notes"];
+  liveStroke: { x: number; y: number }[] | null;
+  liveColor: string;
+}) {
+  const deleteNote = useNotesStore((s) => s.deleteNote);
+  const selectedItemIds = useNotesStore((s) => s.selectedItemIds);
+  const toggleSelectedItem = useNotesStore((s) => s.toggleSelectedItem);
+  const clearSelection = useNotesStore((s) => s.clearSelection);
+
+  const pathFor = (points: { x: number; y: number }[]) => {
+    if (points.length === 0) return "";
+    if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
+    return points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(" ");
+  };
+
+  return (
+    <svg
+      style={{
+        position: "absolute",
+        inset: 0,
+        width: "100%",
+        height: "100%",
+        overflow: "visible",
+        pointerEvents: "none",
+        zIndex: 4,
+      }}
+    >
+      {strokes.map((stroke) => {
+        const points = stroke.strokePoints ?? [];
+        if (points.length < 2) return null;
+        const selected = selectedItemIds.includes(stroke.id);
+        return (
+          <g key={stroke.id} style={{ pointerEvents: "stroke", cursor: "pointer" }}>
+            <path
+              d={pathFor(points)}
+              stroke={stroke.strokeColor ?? "#7c8fd8"}
+              strokeWidth={stroke.strokeWidth ?? 4}
+              fill="none"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              opacity={0.9}
+            />
+            {selected && (
+              <path
+                d={pathFor(points)}
+                stroke="var(--accent)"
+                strokeWidth={(stroke.strokeWidth ?? 4) + 8}
+                fill="none"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                opacity={0.22}
+              />
+            )}
+            <path
+              d={pathFor(points)}
+              stroke="transparent"
+              strokeWidth={Math.max(16, (stroke.strokeWidth ?? 4) + 10)}
+              fill="none"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!e.ctrlKey && !e.metaKey) clearSelection();
+                toggleSelectedItem(stroke.id);
+              }}
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                deleteNote(stroke.id);
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                deleteNote(stroke.id);
+              }}
+            />
+          </g>
+        );
+      })}
+      {liveStroke && liveStroke.length > 1 && (
+        <path
+          d={pathFor(liveStroke)}
+          stroke={liveColor}
+          strokeWidth={4}
+          fill="none"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          opacity={0.78}
+          style={{ pointerEvents: "none" }}
+        />
+      )}
+    </svg>
+  );
+}
+
+function ZoomHud({
+  zoom,
+  onZoomOut,
+  onZoomIn,
+  onReset,
+  onDisableDrawing,
+  drawingMode,
+}: {
+  zoom: number;
+  onZoomOut: () => void;
+  onZoomIn: () => void;
+  onReset: () => void;
+  onDisableDrawing: () => void;
+  drawingMode: boolean;
+}) {
+  return (
+    <div style={{ position: "fixed", left: 58, bottom: 18, zIndex: 999999, display: "flex", gap: 10, alignItems: "center" }}>
+      <div style={{
+        height: 46,
+        display: "flex",
+        alignItems: "center",
+        overflow: "hidden",
+        borderRadius: 10,
+        background: "var(--bg-sidebar)",
+        border: "1px solid var(--sidebar-border)",
+        boxShadow: "0 10px 30px rgba(0,0,0,0.16)",
+      }}>
+        <ZoomButton label="-" title="Zoom out" onClick={onZoomOut} />
+        <button
+          onClick={onReset}
+          title="Reset zoom"
+          style={{
+            width: 70,
+            height: 46,
+            border: "none",
+            background: "transparent",
+            color: "var(--text-ui)",
+            fontFamily: "inherit",
+            fontWeight: 800,
+            cursor: "pointer",
+          }}
+        >
+          {Math.round(zoom * 100)}%
+        </button>
+        <ZoomButton label="+" title="Zoom in" onClick={onZoomIn} />
+      </div>
+      {drawingMode && (
+        <button
+          onClick={onDisableDrawing}
+          title="Exit drawing mode"
+          style={{
+            height: 36,
+            padding: "0 12px",
+            borderRadius: 9,
+            border: "1px solid var(--sidebar-border)",
+            background: "var(--bg-sidebar)",
+            color: "var(--accent)",
+            fontFamily: "inherit",
+            fontWeight: 800,
+            cursor: "pointer",
+          }}
+        >
+          Pen
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ZoomButton({ label, title, onClick }: { label: string; title: string; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      style={{
+        width: 48,
+        height: 46,
+        border: "none",
+        borderRight: label === "-" ? "1px solid rgba(128,128,128,0.18)" : "none",
+        borderLeft: label === "+" ? "1px solid rgba(128,128,128,0.18)" : "none",
+        background: "transparent",
+        color: "var(--text-muted)",
+        fontFamily: "inherit",
+        fontSize: 22,
+        cursor: "pointer",
+      }}
+    >
+      {label}
+    </button>
   );
 }
 

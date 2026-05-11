@@ -28,6 +28,9 @@ function ropeD(sx: number, sy: number, tx: number, ty: number): string {
 
 export default function ConnectionLayer({ notes, gridUnit: G }: Props) {
   const { connections, deleteConnection, connectionMode, addConnection } = useNotesStore();
+  const panX = useNotesStore((s) => s.canvas.panX);
+  const panY = useNotesStore((s) => s.canvas.panY);
+  const zoom = useNotesStore((s) => s.canvas.zoom || 1);
   const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
@@ -35,17 +38,11 @@ export default function ConnectionLayer({ notes, gridUnit: G }: Props) {
   useEffect(() => {
     if (!connectionMode) { setMousePos(null); return; }
     const onMove = (e: MouseEvent) => {
-      const svg = svgRef.current;
-      if (!svg) return;
-      const rect = svg.getBoundingClientRect();
-      // The SVG is inside canvas-world which is translated by pan
-      // We need to subtract the world's translate offset
-      // The parent div's transform is already applied, so we get coords in world space
-      setMousePos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+      setMousePos({ x: (e.clientX - panX) / zoom, y: (e.clientY - panY) / zoom });
     };
     window.addEventListener("mousemove", onMove);
     return () => window.removeEventListener("mousemove", onMove);
-  }, [connectionMode]);
+  }, [connectionMode, panX, panY, zoom]);
 
   const sourceNote = connectionMode ? notes.find((n) => n.id === connectionMode) : null;
 

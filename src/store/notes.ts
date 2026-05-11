@@ -12,12 +12,21 @@ const FOLDER_SIZE = 1;
 const PHOTO_W = 4;
 const PHOTO_H = 5;
 const GRID = 80;
+const DEFAULT_ZOOM = 1;
+const MIN_ZOOM = 0.25;
+const MAX_ZOOM = 3;
 export const SIDEBAR_W_OPEN = 220;
 export const SIDEBAR_W_CLOSED = 48;
 const DOCK_W_OPEN = 0;
 
-export type CanvasItemType = "note" | "folder" | "photo";
+export type CanvasItemType = "note" | "folder" | "photo" | "stroke";
 export type CanvasParentId = string | null;
+export type DockSide = "bottom" | "left";
+
+export interface StrokePoint {
+  x: number;
+  y: number;
+}
 
 function createItemId() {
   return globalThis.crypto?.randomUUID?.() ?? nanoid();
@@ -59,21 +68,26 @@ export interface Note {
   imageUrl?: string;
   imagePath?: string | null;
   caption?: string;
+  strokePoints?: StrokePoint[];
+  strokeColor?: string;
+  strokeWidth?: number;
 }
 
-interface FolderPan {
+interface CanvasViewport {
   panX: number;
   panY: number;
+  zoom: number;
 }
 
 interface NotesStore {
   notes: Note[];
-  canvas: FolderPan;
-  folderPan: Record<string, FolderPan>;
+  canvas: CanvasViewport;
+  folderPan: Record<string, CanvasViewport>;
   activeFolderId: CanvasParentId;
   topZ: number;
   theme: ThemeName;
   sidebarOpen: boolean;
+  dockSide: DockSide;
   dockX: number | null;
   dockY: number | null;
   coffeeVisible: boolean;
@@ -85,18 +99,26 @@ interface NotesStore {
   selectedItemIds: string[];
   pendingDeletedItemIds: string[];
   selectionMode: "normal" | "import";
+  universalSearchOpen: boolean;
+  drawingMode: boolean;
+  strokeColor: string;
 
   addNote: () => void;
   addFolder: (itemIds?: string[]) => string;
   addPhoto: (url: string, imagePath?: string | null, caption?: string, naturalWidth?: number, naturalHeight?: number) => void;
+  addStroke: (points: StrokePoint[], color: string, width?: number) => void;
   updateNote: (id: string, patch: Partial<Note>) => void;
   deleteNote: (id: string) => void;
   deleteItemTree: (id: string) => void;
   consumeDeletedItemIds: (ids: string[]) => void;
   bringToFront: (id: string) => void;
   setPan: (x: number, y: number) => void;
+  setZoom: (zoom: number, anchor?: { x: number; y: number }) => void;
+  zoomBy: (factor: number, anchor?: { x: number; y: number }) => void;
+  resetZoom: () => void;
   setTheme: (t: ThemeName) => void;
   setSidebarOpen: (v: boolean) => void;
+  setDockSide: (side: DockSide) => void;
   setDockPosition: (x: number, y: number) => void;
   setCoffeeVisible: (v: boolean) => void;
   setBadgeMode: (id: string | null) => void;
@@ -128,6 +150,9 @@ interface NotesStore {
   setSelectedItems: (ids: string[]) => void;
   clearSelection: () => void;
   setSelectionMode: (mode: "normal" | "import") => void;
+  setUniversalSearchOpen: (open: boolean) => void;
+  setDrawingMode: (active: boolean) => void;
+  setStrokeColor: (color: string) => void;
 }
 
 function folderKey(id: CanvasParentId) {
@@ -142,6 +167,15 @@ function randomRotation() {
   return ROTATIONS[Math.floor(Math.random() * ROTATIONS.length)];
 }
 
+function clampZoom(zoom: number) {
+  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round(zoom * 100) / 100));
+}
+
+function noteSizeForZoom(zoom: number) {
+  const screenSize = MIN_SIZE * GRID;
+  return Math.max(MIN_SIZE, Math.min(12, Math.round(screenSize / (GRID * zoom))));
+}
+
 function photoGridSize(naturalWidth?: number, naturalHeight?: number) {
   const aspect = naturalWidth && naturalHeight ? naturalWidth / naturalHeight : 0.8;
   if (!Number.isFinite(aspect) || aspect <= 0) return { w: PHOTO_W, h: PHOTO_H };
@@ -154,16 +188,17 @@ function normalizeItem(item: Partial<Note> & { id: string }): Note {
   const type = item.type ?? "note";
   const folderName = item.folderName ?? (type === "folder" ? item.title || "Untitled Folder" : undefined);
   const caption = item.caption ?? (type === "photo" ? item.body || "" : undefined);
+  const strokePoints = Array.isArray(item.strokePoints) ? item.strokePoints : [];
   return {
     id: item.id,
     type,
     parentId: item.parentId ?? null,
     x: item.x ?? 0,
     y: item.y ?? 0,
-    w: item.w ?? (type === "folder" ? FOLDER_SIZE : type === "photo" ? PHOTO_W : MIN_SIZE),
-    h: item.h ?? (type === "folder" ? FOLDER_SIZE : type === "photo" ? PHOTO_H : MIN_SIZE),
+    w: item.w ?? (type === "folder" ? FOLDER_SIZE : type === "photo" ? PHOTO_W : type === "stroke" ? 1 : MIN_SIZE),
+    h: item.h ?? (type === "folder" ? FOLDER_SIZE : type === "photo" ? PHOTO_H : type === "stroke" ? 1 : MIN_SIZE),
     color: item.color ?? randomNoteColor(),
-    rotation: item.rotation ?? (type === "folder" ? 0 : randomRotation()),
+    rotation: item.rotation ?? (type === "folder" || type === "stroke" ? 0 : randomRotation()),
     title: type === "folder" ? (folderName ?? "Untitled Folder") : item.title ?? "",
     body: type === "photo" ? (caption ?? "") : item.body ?? "",
     fontSize: item.fontSize ?? 13,
@@ -175,6 +210,9 @@ function normalizeItem(item: Partial<Note> & { id: string }): Note {
     imageUrl: item.imageUrl,
     imagePath: item.imagePath ?? null,
     caption,
+    strokePoints,
+    strokeColor: item.strokeColor ?? "#7c8fd8",
+    strokeWidth: item.strokeWidth ?? 4,
   };
 }
 
@@ -216,14 +254,15 @@ function getAllFreeSlots(
   return slots;
 }
 
-function findFolderSlot(notes: Note[], parentId: CanvasParentId, canvas: FolderPan, sidebarOpen: boolean) {
+function findFolderSlot(notes: Note[], parentId: CanvasParentId, canvas: CanvasViewport, sidebarOpen: boolean) {
   const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
   const vh = typeof window !== "undefined" ? window.innerHeight : 800;
   const dockInset = sidebarOpen ? DOCK_W_OPEN : SIDEBAR_W_CLOSED;
-  const vLeft = Math.ceil((-canvas.panX + dockInset) / GRID);
-  const vTop = Math.floor(-canvas.panY / GRID);
-  const vRight = Math.ceil((-canvas.panX + vw) / GRID);
-  const vBottom = Math.ceil((-canvas.panY + vh) / GRID);
+  const z = canvas.zoom || DEFAULT_ZOOM;
+  const vLeft = Math.ceil((-canvas.panX + dockInset) / (GRID * z));
+  const vTop = Math.floor(-canvas.panY / (GRID * z));
+  const vRight = Math.ceil((-canvas.panX + vw) / (GRID * z));
+  const vBottom = Math.ceil((-canvas.panY + vh) / (GRID * z));
   const occupied = occupiedCells(notes, parentId);
 
   for (let col = vLeft; col <= vRight; col += 1) {
@@ -238,7 +277,7 @@ function findFolderSlot(notes: Note[], parentId: CanvasParentId, canvas: FolderP
 function occupiedCells(notes: Note[], parentId: CanvasParentId) {
   return new Set(
     notes
-      .filter((n) => n.parentId === parentId)
+      .filter((n) => n.parentId === parentId && n.type !== "stroke")
       .flatMap((n) => {
         const cells: string[] = [];
         for (let cx = n.x; cx < n.x + n.w; cx++)
@@ -249,14 +288,15 @@ function occupiedCells(notes: Note[], parentId: CanvasParentId) {
   );
 }
 
-function findVisibleSlot(notes: Note[], parentId: CanvasParentId, canvas: FolderPan, sidebarOpen: boolean, size = MIN_SIZE) {
+function findVisibleSlot(notes: Note[], parentId: CanvasParentId, canvas: CanvasViewport, sidebarOpen: boolean, size = MIN_SIZE) {
   const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
   const vh = typeof window !== "undefined" ? window.innerHeight : 800;
   const dockInset = sidebarOpen ? DOCK_W_OPEN : SIDEBAR_W_CLOSED;
-  const vLeft = Math.ceil((-canvas.panX + dockInset) / GRID);
-  const vTop = Math.floor(-canvas.panY / GRID);
-  const vRight = Math.ceil((-canvas.panX + vw) / GRID);
-  const vBottom = Math.ceil((-canvas.panY + vh) / GRID);
+  const z = canvas.zoom || DEFAULT_ZOOM;
+  const vLeft = Math.ceil((-canvas.panX + dockInset) / (GRID * z));
+  const vTop = Math.floor(-canvas.panY / (GRID * z));
+  const vRight = Math.ceil((-canvas.panX + vw) / (GRID * z));
+  const vBottom = Math.ceil((-canvas.panY + vh) / (GRID * z));
   const occupied = occupiedCells(notes, parentId);
   const rand = Math.random();
 
@@ -310,12 +350,13 @@ function moveIntoFolder(items: Note[], itemIds: string[], folderId: CanvasParent
 
 export const useNotesStore = create<NotesStore>((set, get) => ({
   notes: [],
-  canvas: { panX: 320, panY: 240 },
-  folderPan: { root: { panX: 320, panY: 240 } },
+  canvas: { panX: 320, panY: 240, zoom: DEFAULT_ZOOM },
+  folderPan: { root: { panX: 320, panY: 240, zoom: DEFAULT_ZOOM } },
   activeFolderId: null,
   topZ: 10,
   theme: DEFAULT_THEME,
   sidebarOpen: true,
+  dockSide: "bottom",
   dockX: null,
   dockY: null,
   coffeeVisible: true,
@@ -327,6 +368,9 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
   selectedItemIds: [],
   pendingDeletedItemIds: [],
   selectionMode: "normal",
+  universalSearchOpen: false,
+  drawingMode: false,
+  strokeColor: "#7c8fd8",
   focusedNoteId: null,
   pendingInsert: null,
   badgeFilter: null,
@@ -335,7 +379,8 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
 
   addNote: () => {
     const { notes, topZ, canvas, sidebarOpen, activeFolderId } = get();
-    const slot = findVisibleSlot(notes.map(normalizeItem), activeFolderId, canvas, sidebarOpen, MIN_SIZE);
+    const size = noteSizeForZoom(canvas.zoom || DEFAULT_ZOOM);
+    const slot = findVisibleSlot(notes.map(normalizeItem), activeFolderId, canvas, sidebarOpen, size);
     const newId = createItemId();
     set({
       notes: [...notes.map(normalizeItem), normalizeItem({
@@ -344,8 +389,8 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
         parentId: activeFolderId,
         x: slot.px,
         y: slot.py,
-        w: MIN_SIZE,
-        h: MIN_SIZE,
+        w: size,
+        h: size,
         color: randomNoteColor(),
         rotation: randomRotation(),
         title: "",
@@ -421,6 +466,39 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
     });
   },
 
+  addStroke: (points, color, width = 4) => {
+    if (points.length < 2) return;
+    const state = get();
+    const minX = Math.min(...points.map((p) => p.x));
+    const minY = Math.min(...points.map((p) => p.y));
+    const maxX = Math.max(...points.map((p) => p.x));
+    const maxY = Math.max(...points.map((p) => p.y));
+    const normalized = state.notes.map(normalizeItem);
+    set({
+      notes: [...normalized, normalizeItem({
+        id: createItemId(),
+        type: "stroke",
+        parentId: state.activeFolderId,
+        x: Math.floor(minX / GRID),
+        y: Math.floor(minY / GRID),
+        w: Math.max(1, Math.ceil((maxX - minX) / GRID)),
+        h: Math.max(1, Math.ceil((maxY - minY) / GRID)),
+        color: "lavender",
+        rotation: 0,
+        title: "",
+        body: "",
+        locked: false,
+        zIndex: state.topZ + 1,
+        badges: [],
+        createdAt: new Date().toISOString(),
+        strokePoints: points,
+        strokeColor: color,
+        strokeWidth: width,
+      })],
+      topZ: state.topZ + 1,
+    });
+  },
+
   updateNote: (id, patch) =>
     set((s) => ({
       notes: s.notes.map((n) => {
@@ -469,13 +547,37 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
   setPan: (x, y) =>
     set((s) => {
       const key = folderKey(s.activeFolderId);
+      const canvas = { panX: x, panY: y, zoom: s.canvas.zoom || DEFAULT_ZOOM };
       return {
-        canvas: { panX: x, panY: y },
-        folderPan: { ...s.folderPan, [key]: { panX: x, panY: y } },
+        canvas,
+        folderPan: { ...s.folderPan, [key]: canvas },
       };
     }),
+  setZoom: (zoom, anchor) =>
+    set((s) => {
+      const nextZoom = clampZoom(zoom);
+      const prevZoom = s.canvas.zoom || DEFAULT_ZOOM;
+      const point = anchor ?? {
+        x: typeof window !== "undefined" ? window.innerWidth / 2 : 640,
+        y: typeof window !== "undefined" ? window.innerHeight / 2 : 400,
+      };
+      const worldX = (point.x - s.canvas.panX) / prevZoom;
+      const worldY = (point.y - s.canvas.panY) / prevZoom;
+      const canvas = {
+        panX: point.x - worldX * nextZoom,
+        panY: point.y - worldY * nextZoom,
+        zoom: nextZoom,
+      };
+      return {
+        canvas,
+        folderPan: { ...s.folderPan, [folderKey(s.activeFolderId)]: canvas },
+      };
+    }),
+  zoomBy: (factor, anchor) => get().setZoom((get().canvas.zoom || DEFAULT_ZOOM) * factor, anchor),
+  resetZoom: () => get().setZoom(DEFAULT_ZOOM),
   setTheme: (t) => set({ theme: t }),
   setSidebarOpen: (v) => set({ sidebarOpen: v }),
+  setDockSide: (side) => set({ dockSide: side }),
   setDockPosition: (x, y) => set({ dockX: x, dockY: y }),
   setCoffeeVisible: (v) => set({ coffeeVisible: v }),
   setBadgeMode: (id) => set({ badgeMode: id }),
@@ -489,7 +591,7 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
   openFolder: (id) =>
     set((s) => {
       const key = folderKey(id);
-      const canvas = s.folderPan[key] ?? { panX: 320, panY: 240 };
+      const canvas = s.folderPan[key] ?? { panX: 320, panY: 240, zoom: DEFAULT_ZOOM };
       return { activeFolderId: id, canvas, selectedItemIds: [], badgeFilter: null, connectionMode: null, selectionMode: "normal" };
     }),
 
@@ -497,14 +599,14 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
     set((s) => {
       const active = s.notes.map(normalizeItem).find((n) => n.id === s.activeFolderId);
       const parentId = active?.parentId ?? null;
-      const canvas = s.folderPan[folderKey(parentId)] ?? { panX: 320, panY: 240 };
+      const canvas = s.folderPan[folderKey(parentId)] ?? { panX: 320, panY: 240, zoom: DEFAULT_ZOOM };
       return { activeFolderId: parentId, canvas, selectedItemIds: [], badgeFilter: null, connectionMode: null, selectionMode: "normal" };
     }),
 
   setActiveFolderId: (id) =>
     set((s) => ({
       activeFolderId: id,
-      canvas: s.folderPan[folderKey(id)] ?? { panX: 320, panY: 240 },
+      canvas: s.folderPan[folderKey(id)] ?? { panX: 320, panY: 240, zoom: DEFAULT_ZOOM },
       selectedItemIds: [],
       badgeFilter: null,
       connectionMode: null,
@@ -577,4 +679,7 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
   setSelectedItems: (ids) => set({ selectedItemIds: ids }),
   clearSelection: () => set({ selectedItemIds: [] }),
   setSelectionMode: (mode) => set({ selectionMode: mode }),
+  setUniversalSearchOpen: (open) => set({ universalSearchOpen: open }),
+  setDrawingMode: (active) => set({ drawingMode: active, badgeMode: active ? null : get().badgeMode, connectionMode: active ? null : get().connectionMode }),
+  setStrokeColor: (color) => set({ strokeColor: color }),
 }));

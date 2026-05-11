@@ -26,6 +26,7 @@ export default function FolderItem({ folder, items, gridUnit: G }: Props) {
     highlightedNoteId,
     selectionMode,
   } = useNotesStore();
+  const zoom = useNotesStore((s) => s.canvas.zoom || 1);
   const children = useMemo(() => items.filter((item) => item.parentId === folder.id), [folder.id, items]);
   const preview = children.slice(0, 4);
   const [editing, setEditing] = useState(false);
@@ -41,6 +42,9 @@ export default function FolderItem({ folder, items, gridUnit: G }: Props) {
   const visualX = dragPos?.x ?? folder.x * G;
   const visualY = dragPos?.y ?? folder.y * G;
   const size = Math.max(76, folder.w * G);
+  const labelBg = theme.folderLabelBg;
+  const labelText = theme.folderLabelText;
+  const labelBorder = theme.folderLabelBorder;
 
   const bindDrag = useGesture({
     onDragStart: () => {
@@ -48,15 +52,15 @@ export default function FolderItem({ folder, items, gridUnit: G }: Props) {
       dragStart.current = { pixelX: folder.x * G, pixelY: folder.y * G };
     },
     onDrag: ({ movement: [mx, my] }) => {
-      setDragPos({ x: dragStart.current.pixelX + mx, y: dragStart.current.pixelY + my });
+      setDragPos({ x: dragStart.current.pixelX + mx / zoom, y: dragStart.current.pixelY + my / zoom });
     },
     onDragEnd: ({ movement: [mx, my] }) => {
       if (Math.abs(mx) < 6 && Math.abs(my) < 6) {
         setDragPos(null);
         return;
       }
-      const nextX = Math.round((dragStart.current.pixelX + mx) / G);
-      const nextY = Math.round((dragStart.current.pixelY + my) / G);
+      const nextX = Math.round((dragStart.current.pixelX + mx / zoom) / G);
+      const nextY = Math.round((dragStart.current.pixelY + my / zoom) / G);
       const dx = nextX - folder.x;
       const dy = nextY - folder.y;
       if (selected && selectedItemIds.length > 1) moveItemsByGrid(selectedItemIds, dx, dy);
@@ -205,9 +209,9 @@ export default function FolderItem({ folder, items, gridUnit: G }: Props) {
               style={{
                 width: Math.max(126, size + 18),
                 border: "none",
-                outline: `1.5px solid ${theme.accent}`,
-                background: theme.sidebarBg,
-                color: "var(--text-ui)",
+                outline: `1.5px solid ${labelBorder}`,
+                background: labelBg,
+                color: labelText,
                 borderRadius: 8,
                 padding: "5px 7px",
                 textAlign: "center",
@@ -227,9 +231,10 @@ export default function FolderItem({ folder, items, gridUnit: G }: Props) {
               title="Click to rename folder"
               style={{
                 maxWidth: Math.max(136, size + 28),
-                border: `1px solid ${theme.sidebarBorder}`,
-                background: theme.sidebarBg,
-                color: "var(--text-ui)",
+                border: `1px solid ${labelBorder}`,
+                background: labelBg,
+                color: labelText,
+                boxShadow: "0 4px 12px rgba(0,0,0,0.22)",
                 borderRadius: 9,
                 padding: "5px 9px",
                 fontSize: 12,

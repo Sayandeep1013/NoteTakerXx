@@ -16,12 +16,15 @@ create table if not exists public.notes (
   title       text        not null default '',
   body        text        not null default '',
   font_size   integer     not null default 13,
-  type        text        not null default 'note' check (type in ('note', 'folder', 'photo')),
+  type        text        not null default 'note' check (type in ('note', 'folder', 'photo', 'stroke')),
   parent_id   uuid        references public.notes(id) on delete cascade,
   folder_name text,
   image_url   text,
   image_path  text,
   caption     text,
+  stroke_points jsonb,
+  stroke_color text,
+  stroke_width real,
   badges      text[]      not null default '{}',
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now()
@@ -36,6 +39,11 @@ alter table public.notes add column if not exists folder_name text;
 alter table public.notes add column if not exists image_url text;
 alter table public.notes add column if not exists image_path text;
 alter table public.notes add column if not exists caption text;
+alter table public.notes add column if not exists stroke_points jsonb;
+alter table public.notes add column if not exists stroke_color text;
+alter table public.notes add column if not exists stroke_width real;
+alter table public.notes drop constraint if exists notes_type_check;
+alter table public.notes add constraint notes_type_check check (type in ('note', 'folder', 'photo', 'stroke'));
 
 create or replace function public.handle_updated_at()
 returns trigger language plpgsql as $$
@@ -63,12 +71,20 @@ create table if not exists public.profiles (
   username    text,
   avatar_url  text,
   theme       text,
+  dock_side   text not null default 'bottom',
   custom_badges jsonb not null default '[]'::jsonb,
   updated_at  timestamptz default now()
 );
 
 alter table public.profiles add column if not exists theme text;
+alter table public.profiles add column if not exists dock_side text not null default 'bottom';
 alter table public.profiles add column if not exists custom_badges jsonb not null default '[]'::jsonb;
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'profiles_dock_side_check') then
+    alter table public.profiles add constraint profiles_dock_side_check check (dock_side in ('bottom', 'left'));
+  end if;
+end $$;
 
 alter table public.profiles enable row level security;
 drop policy if exists "profiles viewable by all" on public.profiles;

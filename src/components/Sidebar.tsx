@@ -16,11 +16,14 @@ import { NOTE_COLOR_KEYS, type NoteColor } from "@/lib/colors";
 import { useHudScale } from "@/hooks/useHudScale";
 
 const DOCK_KEY = "nxtaker_dock_position";
+const DOCK_SIDE_KEY = "nxtaker_dock_side";
 const COFFEE_KEY = "nxtaker_coffee_visible";
 const GUEST_BADGES_KEY = "nxtaker_custom_badges";
 const PHOTOS_BUCKET_DISABLED_KEY = "nxtaker_photos_bucket_disabled";
 const DOCK_W = 768;
 const DOCK_H = 70;
+const DOCK_LEFT_W = 70;
+const DOCK_LEFT_H = 620;
 const MINI = 52;
 const HUD_BOTTOM = 32;
 const CREATE_BUTTON_SIZE = 52;
@@ -30,6 +33,7 @@ export default function Sidebar() {
   const {
     notes, setPan,
     sidebarOpen, setSidebarOpen,
+    dockSide, setDockSide,
     theme: themeName, setTheme,
     badgeMode, setBadgeMode,
     customBadges, addCustomBadge, deleteCustomBadge, setCustomBadges,
@@ -38,6 +42,7 @@ export default function Sidebar() {
     coffeeVisible, setCoffeeVisible,
     bringToFront, setHighlightedNoteId,
     addFolder, addPhoto, activeFolderId, setActiveFolderId,
+    setUniversalSearchOpen, drawingMode, setDrawingMode, strokeColor, setStrokeColor,
   } = useNotesStore();
   const customBadgeRef = useRef<HTMLInputElement>(null);
   const photoRef = useRef<HTMLInputElement>(null);
@@ -48,12 +53,13 @@ export default function Sidebar() {
   const { profile } = useProfile(user);
   const { showMergePrompt, cachedCount, mergeLocalToCloud, discardLocal, dbError } = useNoteSync(user, loading);
   const [showProfile, setShowProfile] = useState(false);
-  const [panel, setPanel] = useState<"theme" | "search" | "filter" | null>(null);
+  const [panel, setPanel] = useState<"theme" | "filter" | "pen" | null>(null);
   const [deleteBadge, setDeleteBadge] = useState<{ id: string; label: string; count: number } | null>(null);
   const hudScale = useHudScale();
 
-  const width = sidebarOpen ? DOCK_W : MINI;
-  const height = sidebarOpen ? DOCK_H : MINI;
+  const isLeftDock = dockSide === "left";
+  const width = sidebarOpen ? (isLeftDock ? DOCK_LEFT_W : DOCK_W) : MINI;
+  const height = sidebarOpen ? (isLeftDock ? Math.min(DOCK_LEFT_H, Math.max(420, typeof window === "undefined" ? DOCK_LEFT_H : window.innerHeight - 36)) : DOCK_H) : MINI;
 
   const allBadges = useMemo<BadgeDef[]>(() => [
     ...DEFAULT_BADGES,
@@ -80,11 +86,35 @@ export default function Sidebar() {
   useEffect(() => {
     try {
       localStorage.removeItem(DOCK_KEY);
+      const savedSide = localStorage.getItem(DOCK_SIDE_KEY);
+      if (savedSide === "bottom" || savedSide === "left") setDockSide(savedSide);
       const coffee = localStorage.getItem(COFFEE_KEY);
       if (coffee !== null) setCoffeeVisible(coffee === "true");
     } catch {}
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    const sb = createClient();
+    sb.from("profiles").select("dock_side").eq("id", user.id).single().then(({ data, error }) => {
+      if (error) {
+        if (!error.message.toLowerCase().includes("dock_side")) console.warn("[Dock] dock_side load:", error.message);
+        return;
+      }
+      const side = (data as { dock_side?: string } | null)?.dock_side;
+      if (side === "bottom" || side === "left") setDockSide(side);
+    });
+  }, [setDockSide, user]);
+
+  useEffect(() => {
+    try { localStorage.setItem(DOCK_SIDE_KEY, dockSide); } catch {}
+    if (!user) return;
+    const sb = createClient();
+    sb.from("profiles").upsert({ id: user.id, dock_side: dockSide }, { onConflict: "id" }).then(({ error }) => {
+      if (error && !error.message.toLowerCase().includes("dock_side")) console.warn("[Dock] dock_side save:", error.message);
+    });
+  }, [dockSide, user]);
 
   useEffect(() => {
     try { localStorage.setItem(COFFEE_KEY, String(coffeeVisible)); } catch {}
@@ -133,8 +163,9 @@ export default function Sidebar() {
 
   const navigateToNote = (note: typeof notes[number]) => {
     const G = 80;
+    const z = useNotesStore.getState().canvas.zoom || 1;
     setActiveFolderId(note.parentId ?? null);
-    setPan(window.innerWidth / 2 - (note.x * G + note.w * G / 2), window.innerHeight / 2 - (note.y * G + note.h * G / 2));
+    setPan(window.innerWidth / 2 - (note.x * G + note.w * G / 2) * z, window.innerHeight / 2 - (note.y * G + note.h * G / 2) * z);
     bringToFront(note.id);
     setHighlightedNoteId(note.id);
     setPanel(null);
@@ -192,9 +223,10 @@ export default function Sidebar() {
         }}
         style={{
           position: "fixed",
-          left: sidebarOpen ? "50%" : "auto",
+          left: sidebarOpen ? (isLeftDock ? 18 : "50%") : "auto",
           right: sidebarOpen ? "auto" : HUD_BOTTOM + CREATE_BUTTON_SIZE + HUD_GAP,
-          bottom: HUD_BOTTOM,
+          top: sidebarOpen && isLeftDock ? "50%" : "auto",
+          bottom: sidebarOpen && isLeftDock ? "auto" : HUD_BOTTOM,
           width,
           height,
           borderRadius: sidebarOpen ? 18 : 16,
@@ -203,13 +235,14 @@ export default function Sidebar() {
           boxShadow: isDark ? "0 8px 40px rgba(0,0,0,0.5)" : "0 8px 40px rgba(0,0,0,0.12)",
           zIndex: 505,
           display: "flex",
+          flexDirection: isLeftDock && sidebarOpen ? "column" : "row",
           alignItems: "center",
           justifyContent: sidebarOpen ? "flex-start" : "center",
           gap: 8,
           padding: sidebarOpen ? "9px 12px" : 0,
           cursor: sidebarOpen ? "default" : "pointer",
-          transform: sidebarOpen ? `translateX(-50%) scale(${hudScale})` : `scale(${hudScale})`,
-          transformOrigin: sidebarOpen ? "bottom center" : "bottom right",
+          transform: sidebarOpen ? (isLeftDock ? `translateY(-50%) scale(${hudScale})` : `translateX(-50%) scale(${hudScale})`) : `scale(${hudScale})`,
+          transformOrigin: sidebarOpen ? (isLeftDock ? "left center" : "bottom center") : "bottom right",
           transition: "width 300ms cubic-bezier(0.18,1.35,0.28,1), height 300ms cubic-bezier(0.18,1.35,0.28,1), border-radius 300ms cubic-bezier(0.18,1.35,0.28,1), transform 180ms ease",
           overflow: "hidden",
         }}
@@ -222,13 +255,16 @@ export default function Sidebar() {
         ) : (
           <>
             <DockButton onClick={collapseDock} title="Compact dock">
-              <DockCollapseIcon />
+              <DockIcon />
             </DockButton>
-            <div style={{ width: 1, height: 34, background: border, margin: "0 2px" }} />
+            <div style={isLeftDock ? { width: 34, height: 1, background: border, margin: "2px 0" } : { width: 1, height: 34, background: border, margin: "0 2px" }} />
+            <DockButton onClick={() => setDockSide(isLeftDock ? "bottom" : "left")} title={isLeftDock ? "Move dock to bottom" : "Move dock to left"}>
+              {isLeftDock ? <DockBottomIcon /> : <DockLeftIcon />}
+            </DockButton>
             <DockButton onClick={() => setPanel(panel === "theme" ? null : "theme")} title={`Theme: ${THEMES[themeName].label}`}>
               <ThemeSwatch current={themeName} />
             </DockButton>
-            <DockButton onClick={() => setPanel(panel === "search" ? null : "search")} title="Search notes">
+            <DockButton onClick={() => setUniversalSearchOpen(true)} title="Search notes">
               <SearchIcon />
             </DockButton>
             <DockButton active={!!badgeFilter || panel === "filter"} onClick={() => setPanel(panel === "filter" ? null : "filter")} title="Filter notes">
@@ -240,13 +276,18 @@ export default function Sidebar() {
             <DockButton onClick={() => photoRef.current?.click()} title="Add photo">
               <ImageDockIcon />
             </DockButton>
+            <DockButton active={drawingMode || panel === "pen"} onClick={() => { setDrawingMode(!drawingMode); setPanel(panel === "pen" ? null : "pen"); }} title={drawingMode ? "Exit pen mode" : "Draw on canvas"}>
+              <PenDockIcon />
+            </DockButton>
             <div style={{
               display: "flex",
+              flexDirection: isLeftDock ? "column" : "row",
               gap: 6,
               flex: "1 1 auto",
-              minWidth: 210,
-              overflowX: "auto",
-              overflowY: "hidden",
+              minWidth: isLeftDock ? 0 : 210,
+              minHeight: isLeftDock ? 120 : 0,
+              overflowX: isLeftDock ? "hidden" : "auto",
+              overflowY: isLeftDock ? "auto" : "hidden",
               alignItems: "center",
               padding: "0 1px",
               scrollbarWidth: "none",
@@ -282,7 +323,7 @@ export default function Sidebar() {
                 <PlusTiny />
               </DockButton>
             </div>
-            <div style={{ width: 1, height: 34, background: border, margin: "0 2px 0 0", flexShrink: 0 }} />
+            <div style={isLeftDock ? { width: 34, height: 1, background: border, margin: "2px 0", flexShrink: 0 } : { width: 1, height: 34, background: border, margin: "0 2px 0 0", flexShrink: 0 }} />
             {user ? (
               <button
                 onPointerDown={(e) => e.stopPropagation()}
@@ -301,7 +342,7 @@ export default function Sidebar() {
               </button>
             ) : (
               <DockButton onClick={loading ? () => {} : signInWithGoogle} title="Sign in with Google" disabled={loading}>
-                <GoogleIcon />
+                <ProfileIcon />
               </DockButton>
             )}
           </>
@@ -313,10 +354,11 @@ export default function Sidebar() {
           onPointerDown={(e) => e.stopPropagation()}
           style={{
             position: "fixed",
-            left: "50%",
-            bottom: HUD_BOTTOM + DOCK_H + 10,
-            transform: "translateX(-50%)",
-            width: panel === "search" ? 310 : 230,
+            left: isLeftDock ? 18 + DOCK_LEFT_W + 10 : "50%",
+            top: isLeftDock ? "50%" : "auto",
+            bottom: isLeftDock ? "auto" : HUD_BOTTOM + DOCK_H + 10,
+            transform: isLeftDock ? "translateY(-50%)" : "translateX(-50%)",
+            width: 230,
             maxHeight: "min(390px, calc(100vh - 116px))",
             overflow: "auto",
             padding: 10,
@@ -328,6 +370,17 @@ export default function Sidebar() {
           }}
         >
           {panel === "theme" && <ThemePanel current={themeName} onChange={(t) => { setTheme(t); setPanel(null); }} />}
+          {panel === "pen" && (
+            <PenPanel
+              active={drawingMode}
+              color={strokeColor}
+              onToggle={() => setDrawingMode(!drawingMode)}
+              onColor={(color) => {
+                setStrokeColor(color);
+                setDrawingMode(true);
+              }}
+            />
+          )}
           {panel === "filter" && (
             <FilterPanel
               allBadges={allBadges}
@@ -335,16 +388,6 @@ export default function Sidebar() {
               badgeFilter={badgeFilter}
               setBadgeFilter={setBadgeFilter}
               onDeleteBadge={requestDeleteBadge}
-            />
-          )}
-          {panel === "search" && (
-            <SearchPanel
-              isDark={isDark}
-              currentTheme={currentTheme}
-              noteSearch={noteSearch}
-              setNoteSearch={setNoteSearch}
-              visibleList={visibleList}
-              navigateToNote={navigateToNote}
             />
           )}
         </div>
@@ -455,6 +498,54 @@ function ThemePanel({ current, onChange }: { current: ThemeName; onChange: (t: T
       })}
       <div style={{ gridColumn: "1/-1", fontSize: 11, color: "var(--text-muted)", textAlign: "center" }}>
         {THEMES[current].label}
+      </div>
+    </div>
+  );
+}
+
+const PEN_COLORS = ["#7c8fd8", "#e58aa9", "#76bfa6", "#f0bd6a", "#b997dc", "#5fb8c9"];
+
+function PenPanel({ active, color, onToggle, onColor }: {
+  active: boolean;
+  color: string;
+  onToggle: () => void;
+  onColor: (color: string) => void;
+}) {
+  return (
+    <div>
+      <button
+        onClick={onToggle}
+        style={{
+          width: "100%",
+          height: 36,
+          borderRadius: 10,
+          border: `1px solid ${active ? "var(--accent)" : "var(--sidebar-border)"}`,
+          background: active ? "var(--btn-hover)" : "transparent",
+          color: active ? "var(--accent)" : "var(--text-ui)",
+          cursor: "pointer",
+          fontFamily: "inherit",
+          fontWeight: 800,
+          marginBottom: 10,
+        }}
+      >
+        {active ? "Pen active" : "Use pen"}
+      </button>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 7 }}>
+        {PEN_COLORS.map((penColor) => (
+          <button
+            key={penColor}
+            onClick={() => onColor(penColor)}
+            title={penColor}
+            style={{
+              aspectRatio: "1",
+              borderRadius: 9,
+              border: `2px solid ${color === penColor ? "var(--text-ui)" : "transparent"}`,
+              background: penColor,
+              cursor: "pointer",
+              boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.10)",
+            }}
+          />
+        ))}
       </div>
     </div>
   );
@@ -718,6 +809,10 @@ function SearchIcon({ style }: { style?: React.CSSProperties }) { return <svg st
 function FilterIcon() { return <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3 4h12l-4.4 5.1v3.8L7.4 14.4V9.1L3 4Z" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
 function FolderDockIcon() { return <svg width="19" height="19" viewBox="0 0 19 19" fill="none"><path d="M2.8 6h5l1.4-1.7h7v10.2a1.4 1.4 0 01-1.4 1.4h-12a1.4 1.4 0 01-1.4-1.4V7.4A1.4 1.4 0 012.8 6z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round"/><path d="M9.5 8.6v4.4M7.3 10.8h4.4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/></svg>; }
 function ImageDockIcon() { return <svg width="19" height="19" viewBox="0 0 19 19" fill="none"><rect x="3" y="3.5" width="13" height="12" rx="2" stroke="currentColor" strokeWidth="1.7"/><path d="M5.3 13l3.1-3.2 2.2 2.2 1.4-1.5 2.7 2.5" stroke="currentColor" strokeWidth="1.55" strokeLinecap="round" strokeLinejoin="round"/><circle cx="12.8" cy="7" r="1.2" fill="currentColor"/></svg>; }
+function PenDockIcon() { return <svg width="19" height="19" viewBox="0 0 19 19" fill="none"><path d="M13.7 2.8l2.5 2.5-8.7 8.7-3.4.9.9-3.4 8.7-8.7z" stroke="currentColor" strokeWidth="1.55" strokeLinecap="round" strokeLinejoin="round"/><path d="M12.2 4.3l2.5 2.5" stroke="currentColor" strokeWidth="1.55" strokeLinecap="round"/></svg>; }
+function ProfileIcon() { return <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="6.2" r="3.1" stroke="currentColor" strokeWidth="1.7"/><path d="M3.4 15.2c.8-3 2.7-4.5 5.6-4.5s4.8 1.5 5.6 4.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/></svg>; }
+function DockLeftIcon() { return <svg width="19" height="19" viewBox="0 0 19 19" fill="none"><rect x="3" y="3.2" width="13" height="12.6" rx="2.2" stroke="currentColor" strokeWidth="1.55"/><path d="M7.2 3.5v12" stroke="currentColor" strokeWidth="1.55"/><path d="M11.7 7.2L9.4 9.5l2.3 2.3" stroke="currentColor" strokeWidth="1.55" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
+function DockBottomIcon() { return <svg width="19" height="19" viewBox="0 0 19 19" fill="none"><rect x="3" y="3.2" width="13" height="12.6" rx="2.2" stroke="currentColor" strokeWidth="1.55"/><path d="M3.4 11.8h12.2" stroke="currentColor" strokeWidth="1.55"/><path d="M7.2 7.7L9.5 10l2.3-2.3" stroke="currentColor" strokeWidth="1.55" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
 function DockIcon() {
   return (
     <svg width="24" height="24" viewBox="0 0 24 24" fill="none">

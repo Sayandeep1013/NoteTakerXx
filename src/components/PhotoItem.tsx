@@ -38,6 +38,7 @@ export default function PhotoItem({ photo, gridUnit: G }: Props) {
   } = useNotesStore();
   const panX = useNotesStore((s) => s.canvas.panX);
   const panY = useNotesStore((s) => s.canvas.panY);
+  const zoom = useNotesStore((s) => s.canvas.zoom || 1);
   const [caption, setCaption] = useState(photo.caption ?? photo.body ?? "");
   const [editingCaption, setEditingCaption] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
@@ -67,8 +68,8 @@ export default function PhotoItem({ photo, gridUnit: G }: Props) {
   const visualY = dragPos?.y ?? resizeDims?.y ?? photo.y * G;
   const visualW = resizeDims?.w ?? photo.w * G;
   const visualH = resizeDims?.h ?? photo.h * G;
-  const originX = visualX + panX + visualW / 2;
-  const originY = visualY + panY + visualH / 2;
+  const originX = visualX * zoom + panX + (visualW * zoom) / 2;
+  const originY = visualY * zoom + panY + (visualH * zoom) / 2;
 
   const bindDrag = useGesture({
     onDragStart: () => {
@@ -78,7 +79,7 @@ export default function PhotoItem({ photo, gridUnit: G }: Props) {
     },
     onDrag: ({ movement: [mx, my] }) => {
       if (photo.locked) return;
-      setDragPos({ x: dragStart.current.pixelX + mx, y: dragStart.current.pixelY + my });
+      setDragPos({ x: dragStart.current.pixelX + mx / zoom, y: dragStart.current.pixelY + my / zoom });
     },
     onDragEnd: ({ movement: [mx, my] }) => {
       if (photo.locked) return;
@@ -86,8 +87,8 @@ export default function PhotoItem({ photo, gridUnit: G }: Props) {
         setDragPos(null);
         return;
       }
-      const nextX = Math.round((dragStart.current.pixelX + mx) / G);
-      const nextY = Math.round((dragStart.current.pixelY + my) / G);
+      const nextX = Math.round((dragStart.current.pixelX + mx / zoom) / G);
+      const nextY = Math.round((dragStart.current.pixelY + my / zoom) / G);
       const dx = nextX - photo.x;
       const dy = nextY - photo.y;
       if (selected && selectedItemIds.length > 1) moveItemsByGrid(selectedItemIds, dx, dy);
@@ -302,6 +303,7 @@ export default function PhotoItem({ photo, gridUnit: G }: Props) {
             <PhotoResizeHandle
               photo={photo}
               G={G}
+              zoom={zoom}
               accent={theme.accent}
               onPixelUpdate={setResizeDims}
               onGridCommit={(patch) => {
@@ -315,6 +317,7 @@ export default function PhotoItem({ photo, gridUnit: G }: Props) {
               G={G}
               panX={panX}
               panY={panY}
+              zoom={zoom}
               accent={theme.accent}
               onRotate={(rotation) => updateNote(photo.id, { rotation })}
               onStayHovered={keepControlsVisible}
@@ -369,8 +372,8 @@ export default function PhotoItem({ photo, gridUnit: G }: Props) {
           caption={caption}
           originX={originX}
           originY={originY}
-          originW={visualW}
-          originH={visualH}
+          originW={visualW * zoom}
+          originH={visualH * zoom}
           onCaption={setCaption}
           onSaveCaption={commitCaption}
           onClose={() => setShowLightbox(false)}
@@ -381,9 +384,10 @@ export default function PhotoItem({ photo, gridUnit: G }: Props) {
   );
 }
 
-function PhotoResizeHandle({ photo, G, accent, onPixelUpdate, onGridCommit, onStayHovered }: {
+function PhotoResizeHandle({ photo, G, zoom, accent, onPixelUpdate, onGridCommit, onStayHovered }: {
   photo: CanvasItem;
   G: number;
+  zoom: number;
   accent: string;
   onPixelUpdate: (d: { x: number; y: number; w: number; h: number }) => void;
   onGridCommit: (p: Partial<CanvasItem>) => void;
@@ -396,14 +400,18 @@ function PhotoResizeHandle({ photo, G, accent, onPixelUpdate, onGridCommit, onSt
     },
     onDrag: ({ movement: [mx, my] }) => {
       const s = start.current;
-      const w = Math.max(3 * G, s.w - mx);
-      const h = Math.max(3 * G, s.h + my);
+      const dx = mx / zoom;
+      const dy = my / zoom;
+      const w = Math.max(3 * G, s.w - dx);
+      const h = Math.max(3 * G, s.h + dy);
       onPixelUpdate({ x: s.x + (s.w - w), y: s.y, w, h });
     },
     onDragEnd: ({ movement: [mx, my] }) => {
       const s = start.current;
-      const w = Math.max(3 * G, s.w - mx);
-      const h = Math.max(3 * G, s.h + my);
+      const dx = mx / zoom;
+      const dy = my / zoom;
+      const w = Math.max(3 * G, s.w - dx);
+      const h = Math.max(3 * G, s.h + dy);
       onGridCommit({
         x: Math.round((s.x + (s.w - w)) / G),
         y: Math.round(s.y / G),
@@ -421,11 +429,12 @@ function PhotoResizeHandle({ photo, G, accent, onPixelUpdate, onGridCommit, onSt
   );
 }
 
-function PhotoRotationHandle({ photo, G, panX, panY, accent, onRotate, onStayHovered }: {
+function PhotoRotationHandle({ photo, G, panX, panY, zoom, accent, onRotate, onStayHovered }: {
   photo: CanvasItem;
   G: number;
   panX: number;
   panY: number;
+  zoom: number;
   accent: string;
   onRotate: (rotation: number) => void;
   onStayHovered: () => void;
@@ -434,8 +443,8 @@ function PhotoRotationHandle({ photo, G, panX, panY, accent, onRotate, onStayHov
   const draggedRef = useRef(false);
   const [active, setActive] = useState(false);
   const [display, setDisplay] = useState(photo.rotation);
-  const cx = () => photo.x * G + photo.w * G / 2 + panX;
-  const cy = () => photo.y * G + photo.h * G / 2 + panY;
+  const cx = () => (photo.x * G + photo.w * G / 2) * zoom + panX;
+  const cy = () => (photo.y * G + photo.h * G / 2) * zoom + panY;
   const bind = useGesture({
     onDragStart: ({ xy: [mx, my] }) => {
       setActive(true);

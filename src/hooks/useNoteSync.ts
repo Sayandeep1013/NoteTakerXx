@@ -14,7 +14,7 @@ const MISSING_NOTE_COLUMNS_KEY = "nxtaker_missing_note_columns";
 const PHOTOS_BUCKET_DISABLED_KEY = "nxtaker_photos_bucket_disabled";
 const DEBOUNCE   = 800;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const CANVAS_DB_COLUMNS = ["type", "parent_id", "folder_name", "image_url", "image_path", "caption"] as const;
+const CANVAS_DB_COLUMNS = ["type", "parent_id", "folder_name", "image_url", "image_path", "caption", "stroke_points", "stroke_color", "stroke_width"] as const;
 const OPTIONAL_DB_COLUMNS = ["badges", "font_size", ...CANVAS_DB_COLUMNS] as const;
 
 type GuestCache = {
@@ -50,6 +50,9 @@ function normalizeNote(note: Note): Note {
     folderName: type === "folder" ? note.folderName ?? note.title ?? "Untitled Folder" : note.folderName,
     caption: type === "photo" ? note.caption ?? note.body ?? "" : note.caption,
     imagePath: note.imagePath ?? null,
+    strokePoints: Array.isArray(note.strokePoints) ? note.strokePoints : [],
+    strokeColor: note.strokeColor ?? "#7c8fd8",
+    strokeWidth: note.strokeWidth ?? 4,
   };
 }
 
@@ -156,6 +159,9 @@ function toRow(n: Note, userId: string, includeBadges: boolean) {
     image_url: n.imageUrl ?? null,
     image_path: n.imagePath ?? null,
     caption: n.caption ?? null,
+    stroke_points: n.strokePoints ?? null,
+    stroke_color: n.strokeColor ?? null,
+    stroke_width: n.strokeWidth ?? null,
     // created_at is set only on INSERT (DB default) — not touched on UPDATE
   };
   if (includeBadges) row.badges = n.badges;
@@ -182,6 +188,9 @@ function fromRow(r: Record<string, unknown>): Note {
     imageUrl:   r.image_url as string | undefined,
     imagePath:  (r.image_path as string | null | undefined) ?? null,
     caption:    r.caption as string | undefined,
+    strokePoints: (r.stroke_points as Note["strokePoints"] | null | undefined) ?? [],
+    strokeColor: r.stroke_color as string | undefined,
+    strokeWidth: r.stroke_width as number | undefined,
   } as Note);
 }
 
@@ -359,6 +368,7 @@ export function useNoteSync(user: User | null, authLoading = false) {
               const hasImageUrl = Object.prototype.hasOwnProperty.call(row, "image_url");
               const hasImagePath = Object.prototype.hasOwnProperty.call(row, "image_path");
               const hasCaption = Object.prototype.hasOwnProperty.call(row, "caption");
+              const hasStrokePoints = Object.prototype.hasOwnProperty.call(row, "stroke_points");
               const cachedHasCanvasIdentity =
                 cached.type !== "note" ||
                 cached.parentId !== null ||
@@ -381,6 +391,9 @@ export function useNoteSync(user: User | null, authLoading = false) {
                 imageUrl: preserveCachedCanvasIdentity || !hasImageUrl ? cached.imageUrl : dbItem.imageUrl,
                 imagePath: preserveCachedCanvasIdentity || !hasImagePath ? cached.imagePath : dbItem.imagePath,
                 caption: preserveCachedCanvasIdentity || !hasCaption ? cached.caption : dbItem.caption,
+                strokePoints: preserveCachedCanvasIdentity || !hasStrokePoints ? cached.strokePoints : dbItem.strokePoints,
+                strokeColor: preserveCachedCanvasIdentity ? cached.strokeColor : dbItem.strokeColor,
+                strokeWidth: preserveCachedCanvasIdentity ? cached.strokeWidth : dbItem.strokeWidth,
                 w: preserveCachedCanvasIdentity || !hasType ? cached.w : dbItem.w,
                 h: preserveCachedCanvasIdentity || !hasType ? cached.h : dbItem.h,
                 title: preserveCachedCanvasIdentity || !hasType ? cached.title : dbItem.title,
@@ -474,6 +487,9 @@ export function useNoteSync(user: User | null, authLoading = false) {
         (p.imageUrl ?? "") === (note.imageUrl ?? "") &&
         (p.imagePath ?? "") === (note.imagePath ?? "") &&
         (p.caption ?? "") === (note.caption ?? "") &&
+        JSON.stringify(p.strokePoints ?? []) === JSON.stringify(note.strokePoints ?? []) &&
+        (p.strokeColor ?? "") === (note.strokeColor ?? "") &&
+        (p.strokeWidth ?? 4) === (note.strokeWidth ?? 4) &&
         (p.fontSize ?? 13) === (note.fontSize ?? 13) &&
         JSON.stringify(p.badges) === JSON.stringify(note.badges);
       if (unchanged) return;

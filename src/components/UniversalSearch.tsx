@@ -9,11 +9,13 @@ const GRID = 80;
 export default function UniversalSearch() {
   const notes = useNotesStore((s) => s.notes);
   const setPan = useNotesStore((s) => s.setPan);
+  const zoom = useNotesStore((s) => s.canvas.zoom || 1);
   const bringToFront = useNotesStore((s) => s.bringToFront);
   const setHighlightedNoteId = useNotesStore((s) => s.setHighlightedNoteId);
   const setActiveFolderId = useNotesStore((s) => s.setActiveFolderId);
+  const open = useNotesStore((s) => s.universalSearchOpen);
+  const setOpen = useNotesStore((s) => s.setUniversalSearchOpen);
   const theme = useTheme();
-  const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -69,7 +71,7 @@ export default function UniversalSearch() {
     const cx = note.x * GRID + note.w * GRID / 2;
     const cy = note.y * GRID + note.h * GRID / 2;
     setActiveFolderId(note.parentId ?? null);
-    setPan(window.innerWidth / 2 - cx, window.innerHeight / 2 - cy);
+    setPan(window.innerWidth / 2 - cx * zoom, window.innerHeight / 2 - cy * zoom);
     bringToFront(note.id);
     setHighlightedNoteId(note.id);
     close();

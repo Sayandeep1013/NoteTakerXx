@@ -5,7 +5,7 @@ import { useNotesStore } from "@/store/notes";
 import { THEMES } from "@/lib/themes";
 
 const DOT_SPACING   = 40;
-const DOT_BASE_R    = 1.5;
+const DOT_BASE_R    = 1.9;
 const DOT_PEAK_R    = 5;
 const BALL_RADIUS   = 110;   // 220px diameter — noticeable but not overwhelming
 const PUSH_STRENGTH = 18;
@@ -44,8 +44,9 @@ export default function DotGrid() {
 
   const panX = useNotesStore((s) => s.canvas.panX);
   const panY = useNotesStore((s) => s.canvas.panY);
-  const panRef = useRef({ x: 0, y: 0 });
-  panRef.current = { x: panX, y: panY };
+  const zoom = useNotesStore((s) => s.canvas.zoom || 1);
+  const panRef = useRef({ x: 0, y: 0, zoom: 1 });
+  panRef.current = { x: panX, y: panY, zoom };
 
   const themeKey = useNotesStore((s) => s.theme);
   const themeRef = useRef<DotTheme>(LIGHT);
@@ -65,17 +66,20 @@ export default function DotGrid() {
     window.addEventListener("resize", resize);
 
     const draw = () => {
-      const { x: px, y: py } = panRef.current;
+      const { x: px, y: py, zoom: z } = panRef.current;
       const { x: mx, y: my } = mouseRef.current;
       const theme = themeRef.current;
       const W = cvs.width, H = cvs.height;
+      const spacing = Math.max(8, DOT_SPACING * z);
+      const baseRadius = Math.max(0.8, DOT_BASE_R * Math.sqrt(z));
+      const peakRadius = Math.max(baseRadius + 1, DOT_PEAK_R * Math.sqrt(z));
 
       ctx.clearRect(0, 0, W, H);
 
-      const startCol = Math.floor(-px / DOT_SPACING) - 1;
-      const endCol   = Math.ceil((W - px) / DOT_SPACING) + 1;
-      const startRow = Math.floor(-py / DOT_SPACING) - 1;
-      const endRow   = Math.ceil((H - py) / DOT_SPACING) + 1;
+      const startCol = Math.floor(-px / spacing) - 1;
+      const endCol   = Math.ceil((W - px) / spacing) + 1;
+      const startRow = Math.floor(-py / spacing) - 1;
+      const endRow   = Math.ceil((H - py) / spacing) + 1;
 
       const [br, bg, bb, ba] = theme.base;
       const [hr, hg, hb, ha] = theme.hot;
@@ -83,8 +87,8 @@ export default function DotGrid() {
       for (let col = startCol; col <= endCol; col++) {
         for (let row = startRow; row <= endRow; row++) {
           // Rest position of this dot (screen coords)
-          const restX = col * DOT_SPACING + px;
-          const restY = row * DOT_SPACING + py;
+          const restX = col * spacing + px;
+          const restY = row * spacing + py;
 
           const ddx = restX - mx;
           const ddy = restY - my;
@@ -92,7 +96,7 @@ export default function DotGrid() {
 
           let finalX = restX;
           let finalY = restY;
-          let radius = DOT_BASE_R;
+          let radius = baseRadius;
           let r = br, g = bg, b = bb, a = ba;
 
           if (dist < BALL_RADIUS && dist > 0) {
@@ -107,7 +111,7 @@ export default function DotGrid() {
             finalY = restY + Math.sin(angle) * pushMag;
 
             // Size — grows at the crown
-            radius = lerp(DOT_BASE_R, DOT_PEAK_R, liftT);
+            radius = lerp(baseRadius, peakRadius, liftT);
 
             // Color — transition base → hot
             r = Math.round(lerp(br, hr, liftT));
