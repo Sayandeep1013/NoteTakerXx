@@ -276,7 +276,7 @@ export default function Sidebar() {
             <DockButton onClick={() => photoRef.current?.click()} title="Add photo">
               <ImageDockIcon />
             </DockButton>
-            <DockButton active={drawingMode || panel === "pen"} onClick={() => { setDrawingMode(!drawingMode); setPanel(panel === "pen" ? null : "pen"); }} title={drawingMode ? "Exit pen mode" : "Draw on canvas"}>
+            <DockButton active={drawingMode} onClick={() => { setDrawingMode(!drawingMode); setPanel(panel === "pen" ? null : "pen"); }} title={drawingMode ? "Exit pen mode" : "Draw on canvas"}>
               <PenDockIcon />
             </DockButton>
             <div style={{

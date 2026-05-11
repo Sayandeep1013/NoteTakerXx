@@ -159,11 +159,13 @@ function toRow(n: Note, userId: string, includeBadges: boolean) {
     image_url: n.imageUrl ?? null,
     image_path: n.imagePath ?? null,
     caption: n.caption ?? null,
-    stroke_points: n.strokePoints ?? null,
-    stroke_color: n.strokeColor ?? null,
-    stroke_width: n.strokeWidth ?? null,
     // created_at is set only on INSERT (DB default) — not touched on UPDATE
   };
+  if (n.type === "stroke") {
+    row.stroke_points = n.strokePoints ?? [];
+    row.stroke_color = n.strokeColor ?? "#7c8fd8";
+    row.stroke_width = n.strokeWidth ?? 4;
+  }
   if (includeBadges) row.badges = n.badges;
   return row;
 }
