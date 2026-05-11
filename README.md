@@ -8,6 +8,9 @@ NoteTakerXX is a spatial note-taking app built around an infinite canvas. Instea
 
 - Infinite free-form canvas with a reactive dot-grid background.
 - Smooth canvas panning with mouse drag and wheel/trackpad movement.
+- Excalidraw-style canvas zoom controls that scale only canvas content while the dock and HUD stay fixed-size.
+- `Ctrl`/`Cmd` + wheel zooms around the pointer; normal wheel/trackpad movement keeps panning.
+- First-run empty-canvas guide with a one-click prompt to create the first note.
 - Floating sticky notes with title, body, note color, rotation, and z-index layering.
 - Smart note placement that tries to create new notes in an open visible spot.
 - Drag notes around the canvas with grid-aligned positioning.
@@ -29,6 +32,7 @@ NoteTakerXX is a spatial note-taking app built around an infinite canvas. Instea
   - Clickable todo checkboxes in read mode.
   - Smart Enter and Backspace handling for formatted lines.
   - Keyboard shortcuts for bullets and todos.
+  - Slash-command menu for bullets, numbered lists, and todos by typing `/` at the start of a line.
 - Visual note connections using rope-style curved lines.
 - Shift-click connection workflow for linking two notes.
 - Connection preview while choosing a target note.
@@ -40,10 +44,14 @@ NoteTakerXX is a spatial note-taking app built around an infinite canvas. Instea
 - Badge filtering to show only matching notes.
 - Custom badge deletion with confirmation and automatic removal from affected notes.
 - Dock-style bottom toolbar with compact and expanded states.
+- Optional left-side vertical dock layout with saved preference.
+- Freeform pen tool for drawing directly on the canvas.
+- Pastel pen color picker.
+- Eraser tool for removing freeform pen strokes without touching notes, folders, or images.
 - Theme picker with six themes: Paper, Cork Board, Slate, Midnight, Forest, and Dusk.
 - Theme persistence through local storage and the signed-in user's Supabase profile.
 - Global command-palette search with `Ctrl+Shift+P` / `Cmd+Shift+P`.
-- Dock search panel for quickly finding and navigating to notes.
+- Dock search opens the same universal search overlay for quickly finding and navigating to notes.
 - Search result navigation that centers the selected note and highlights it.
 - Profile modal with account information, note list, note search, and badge filtering.
 - Google OAuth sign-in through Supabase.
@@ -55,6 +63,7 @@ NoteTakerXX is a spatial note-taking app built around an infinite canvas. Instea
 - Avatar upload through Supabase Storage.
 - Coffee/support QR modal with a toggle to hide or show the coffee button.
 - Persisted canvas pan position.
+- Persisted canvas zoom position.
 - Persisted coffee-button preference.
 - Lightweight FPS and memory monitor.
 - Responsive HUD scaling for smaller screens.
@@ -167,8 +176,8 @@ npm run dev
 
 The app works as a guest app with local storage, but sign-in and cloud sync require Supabase. The schema includes:
 
-- `notes` table for canvas notes, position, dimensions, color, rotation, lock state, content, font size, badges, and timestamps.
-- `profiles` table for username, avatar URL, theme, and custom badges.
+- `notes` table for canvas notes, photos, folders, pen strokes, position, dimensions, color, rotation, lock state, content, font size, badges, and timestamps.
+- `profiles` table for username, avatar URL, theme, dock-side preference, and custom badges.
 - RLS policies so users can only modify their own notes and profiles.
 - `avatars` storage bucket for profile images.
 
@@ -191,7 +200,13 @@ npm run lint
 
 - Drag the empty canvas to pan.
 - Use wheel or trackpad scrolling to pan the canvas.
+- Use `Ctrl`/`Cmd` + wheel to zoom the canvas.
+- Use the bottom-left zoom HUD to zoom in, zoom out, or reset to `100%`.
 - Click `+` to create a note.
+- Use the image button in the dock to add a photo card.
+- Use the folder button in the dock to create a folder.
+- Use the pen button to draw freeform strokes on the canvas.
+- Use the eraser button to remove pen strokes.
 - Drag a note header handle to move a note.
 - Drag the resize handle to resize a note.
 - Drag the rotation handle to rotate a note.
@@ -199,10 +214,12 @@ npm run lint
 - Shift-click one note, then Shift-click another note to connect them.
 - Press `Esc` to cancel connection mode or close active edit/modal states.
 - Use `Ctrl+Shift+P` or `Cmd+Shift+P` to open universal search.
+- Click the dock search icon to open universal search.
+- Type `/` at the start of a note body line to open list/todo commands.
 - In note body editing, use `Ctrl+.` / `Cmd+.` for bullets.
 - In note body editing, use `Ctrl+/` / `Cmd+/` for todos.
 
 ## Current Limitations
 
-- Note content syncs to Supabase, while visual note connections currently live in the client state for the active session.
+- Note content, photos, folders, and pen strokes sync to Supabase; visual note connections currently live in the client state for the active session.
 - Guest data is stored in the browser's local storage, so it is tied to that browser profile until merged into an account.

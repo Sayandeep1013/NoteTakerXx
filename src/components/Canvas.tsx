@@ -31,7 +31,7 @@ export default function Canvas() {
     notes, canvas, folderPan, setPan, setZoom, zoomBy, resetZoom, addNote, addStroke, connectionMode, setConnectionMode, badgeFilter,
     coffeeVisible, setCoffeeVisible, activeFolderId, goToParentFolder, setActiveFolderId,
     selectedItemIds, clearSelection, moveItemsToFolder, setSelectionMode,
-    drawingMode, strokeColor, setDrawingMode,
+    drawingMode, eraserMode, strokeColor, setDrawingMode, setEraserMode,
   } = useNotesStore();
   const surfaceRef = useRef<HTMLDivElement>(null);
   const panState = useRef({ active: false, startX: 0, startY: 0, panX: 0, panY: 0 });
@@ -216,7 +216,7 @@ export default function Canvas() {
     <div
       ref={surfaceRef}
       className="canvas-surface"
-      style={{ cursor: drawingMode ? "crosshair" : cursor, userSelect: "none" }}
+      style={{ cursor: drawingMode ? "crosshair" : eraserMode ? "cell" : cursor, userSelect: "none" }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
@@ -248,7 +248,7 @@ export default function Canvas() {
         style={{ transform: `translate(${canvas.panX}px, ${canvas.panY}px) scale(${canvas.zoom || 1})`, zIndex: 2 }}
       >
         <ConnectionLayer notes={visibleNotes} gridUnit={80} />
-        <StrokeLayer strokes={visibleStrokes} liveStroke={liveStroke} liveColor={strokeColor} />
+        <StrokeLayer strokes={visibleStrokes} liveStroke={liveStroke} liveColor={strokeColor} eraserMode={eraserMode} />
         {visibleNotes.map((note) => (
           <Note key={note.id} note={note} gridUnit={80} />
         ))}
@@ -318,7 +318,9 @@ export default function Canvas() {
         onZoomIn={() => zoomBy(ZOOM_STEP)}
         onReset={resetZoom}
         onDisableDrawing={() => setDrawingMode(false)}
+        onDisableEraser={() => setEraserMode(false)}
         drawingMode={drawingMode}
+        eraserMode={eraserMode}
       />
 
       {SHOW_COFFEE_BUTTON && coffeeVisible && <CoffeeButton onHide={() => setCoffeeVisible(false)} />}
@@ -379,6 +381,7 @@ export default function Canvas() {
       <Sidebar />
       <UniversalSearch />
       <ResourceMonitor />
+      {notes.length === 0 && !activeFolderId && <FirstRunGuide onAddNote={addNote} />}
     </div>
   );
 }
@@ -387,10 +390,12 @@ function StrokeLayer({
   strokes,
   liveStroke,
   liveColor,
+  eraserMode,
 }: {
   strokes: ReturnType<typeof useNotesStore.getState>["notes"];
   liveStroke: { x: number; y: number }[] | null;
   liveColor: string;
+  eraserMode: boolean;
 }) {
   const deleteNote = useNotesStore((s) => s.deleteNote);
   const selectedItemIds = useNotesStore((s) => s.selectedItemIds);
@@ -420,7 +425,7 @@ function StrokeLayer({
         if (points.length < 2) return null;
         const selected = selectedItemIds.includes(stroke.id);
         return (
-          <g key={stroke.id} style={{ pointerEvents: "stroke", cursor: "pointer" }}>
+          <g key={stroke.id} style={{ pointerEvents: "stroke", cursor: eraserMode ? "cell" : "pointer" }}>
             <path
               d={pathFor(points)}
               stroke={stroke.strokeColor ?? "#7c8fd8"}
@@ -450,6 +455,10 @@ function StrokeLayer({
               strokeLinejoin="round"
               onClick={(e) => {
                 e.stopPropagation();
+                if (eraserMode) {
+                  deleteNote(stroke.id);
+                  return;
+                }
                 if (!e.ctrlKey && !e.metaKey) clearSelection();
                 toggleSelectedItem(stroke.id);
               }}
@@ -488,14 +497,18 @@ function ZoomHud({
   onZoomIn,
   onReset,
   onDisableDrawing,
+  onDisableEraser,
   drawingMode,
+  eraserMode,
 }: {
   zoom: number;
   onZoomOut: () => void;
   onZoomIn: () => void;
   onReset: () => void;
   onDisableDrawing: () => void;
+  onDisableEraser: () => void;
   drawingMode: boolean;
+  eraserMode: boolean;
 }) {
   return (
     <div style={{ position: "fixed", left: 58, bottom: 18, zIndex: 999999, display: "flex", gap: 10, alignItems: "center" }}>
@@ -547,6 +560,69 @@ function ZoomHud({
           Pen
         </button>
       )}
+      {eraserMode && (
+        <button
+          onClick={onDisableEraser}
+          title="Exit eraser mode"
+          style={{
+            height: 36,
+            padding: "0 12px",
+            borderRadius: 9,
+            border: "1px solid var(--sidebar-border)",
+            background: "var(--bg-sidebar)",
+            color: "var(--accent)",
+            fontFamily: "inherit",
+            fontWeight: 800,
+            cursor: "pointer",
+          }}
+        >
+          Eraser
+        </button>
+      )}
+    </div>
+  );
+}
+
+function FirstRunGuide({ onAddNote }: { onAddNote: () => void }) {
+  return (
+    <div
+      style={{
+        position: "fixed",
+        left: "50%",
+        top: "46%",
+        transform: "translate(-50%, -50%)",
+        width: "min(560px, calc(100vw - 40px))",
+        zIndex: 480,
+        padding: "22px 24px",
+        borderRadius: 16,
+        background: "var(--bg-sidebar)",
+        border: "1px solid var(--sidebar-border)",
+        color: "var(--text-ui)",
+        boxShadow: "0 24px 80px rgba(0,0,0,0.20)",
+        textAlign: "center",
+        pointerEvents: "auto",
+      }}
+    >
+      <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 8 }}>Start your canvas</div>
+      <div style={{ fontSize: 13, lineHeight: 1.55, color: "var(--text-muted)", marginBottom: 16 }}>
+        Press the plus button to add your first sticky note. Use the dock for search, images, folders, badges, pen, and eraser. Drag empty space to pan, and use the zoom controls at the bottom left.
+      </div>
+      <button
+        onClick={onAddNote}
+        style={{
+          height: 38,
+          padding: "0 16px",
+          borderRadius: 10,
+          border: "none",
+          background: "var(--accent)",
+          color: "#fff",
+          fontFamily: "inherit",
+          fontWeight: 850,
+          cursor: "pointer",
+        }}
+      >
+        Add first note
+      </button>
     </div>
   );
 }

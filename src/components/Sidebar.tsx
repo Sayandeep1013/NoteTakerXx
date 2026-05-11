@@ -42,7 +42,7 @@ export default function Sidebar() {
     coffeeVisible, setCoffeeVisible,
     bringToFront, setHighlightedNoteId,
     addFolder, addPhoto, activeFolderId, setActiveFolderId,
-    setUniversalSearchOpen, drawingMode, setDrawingMode, strokeColor, setStrokeColor,
+    setUniversalSearchOpen, drawingMode, setDrawingMode, eraserMode, setEraserMode, strokeColor, setStrokeColor,
   } = useNotesStore();
   const customBadgeRef = useRef<HTMLInputElement>(null);
   const photoRef = useRef<HTMLInputElement>(null);
@@ -53,7 +53,7 @@ export default function Sidebar() {
   const { profile } = useProfile(user);
   const { showMergePrompt, cachedCount, mergeLocalToCloud, discardLocal, dbError } = useNoteSync(user, loading);
   const [showProfile, setShowProfile] = useState(false);
-  const [panel, setPanel] = useState<"theme" | "filter" | "pen" | null>(null);
+  const [panel, setPanel] = useState<"theme" | "filter" | "pen" | "erase" | null>(null);
   const [deleteBadge, setDeleteBadge] = useState<{ id: string; label: string; count: number } | null>(null);
   const hudScale = useHudScale();
 
@@ -279,6 +279,9 @@ export default function Sidebar() {
             <DockButton active={drawingMode} onClick={() => { setDrawingMode(!drawingMode); setPanel(panel === "pen" ? null : "pen"); }} title={drawingMode ? "Exit pen mode" : "Draw on canvas"}>
               <PenDockIcon />
             </DockButton>
+            <DockButton active={eraserMode} onClick={() => { setEraserMode(!eraserMode); setPanel(panel === "erase" ? null : "erase"); }} title={eraserMode ? "Exit eraser mode" : "Erase pen strokes"}>
+              <EraserDockIcon />
+            </DockButton>
             <div style={{
               display: "flex",
               flexDirection: isLeftDock ? "column" : "row",
@@ -379,6 +382,12 @@ export default function Sidebar() {
                 setStrokeColor(color);
                 setDrawingMode(true);
               }}
+            />
+          )}
+          {panel === "erase" && (
+            <EraserPanel
+              active={eraserMode}
+              onToggle={() => setEraserMode(!eraserMode)}
             />
           )}
           {panel === "filter" && (
@@ -546,6 +555,33 @@ function PenPanel({ active, color, onToggle, onColor }: {
             }}
           />
         ))}
+      </div>
+    </div>
+  );
+}
+
+function EraserPanel({ active, onToggle }: { active: boolean; onToggle: () => void }) {
+  return (
+    <div>
+      <button
+        onClick={onToggle}
+        style={{
+          width: "100%",
+          height: 36,
+          borderRadius: 10,
+          border: `1px solid ${active ? "var(--accent)" : "var(--sidebar-border)"}`,
+          background: active ? "var(--btn-hover)" : "transparent",
+          color: active ? "var(--accent)" : "var(--text-ui)",
+          cursor: "pointer",
+          fontFamily: "inherit",
+          fontWeight: 800,
+          marginBottom: 8,
+        }}
+      >
+        {active ? "Eraser active" : "Use eraser"}
+      </button>
+      <div style={{ fontSize: 12, lineHeight: 1.45, color: "var(--text-muted)" }}>
+        Click a pen stroke on the canvas to erase it. Notes, folders, and images stay untouched.
       </div>
     </div>
   );
@@ -810,6 +846,7 @@ function FilterIcon() { return <svg width="18" height="18" viewBox="0 0 18 18" f
 function FolderDockIcon() { return <svg width="19" height="19" viewBox="0 0 19 19" fill="none"><path d="M2.8 6h5l1.4-1.7h7v10.2a1.4 1.4 0 01-1.4 1.4h-12a1.4 1.4 0 01-1.4-1.4V7.4A1.4 1.4 0 012.8 6z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round"/><path d="M9.5 8.6v4.4M7.3 10.8h4.4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/></svg>; }
 function ImageDockIcon() { return <svg width="19" height="19" viewBox="0 0 19 19" fill="none"><rect x="3" y="3.5" width="13" height="12" rx="2" stroke="currentColor" strokeWidth="1.7"/><path d="M5.3 13l3.1-3.2 2.2 2.2 1.4-1.5 2.7 2.5" stroke="currentColor" strokeWidth="1.55" strokeLinecap="round" strokeLinejoin="round"/><circle cx="12.8" cy="7" r="1.2" fill="currentColor"/></svg>; }
 function PenDockIcon() { return <svg width="19" height="19" viewBox="0 0 19 19" fill="none"><path d="M13.7 2.8l2.5 2.5-8.7 8.7-3.4.9.9-3.4 8.7-8.7z" stroke="currentColor" strokeWidth="1.55" strokeLinecap="round" strokeLinejoin="round"/><path d="M12.2 4.3l2.5 2.5" stroke="currentColor" strokeWidth="1.55" strokeLinecap="round"/></svg>; }
+function EraserDockIcon() { return <svg width="19" height="19" viewBox="0 0 19 19" fill="none"><path d="M6.4 14.5h7.4" stroke="currentColor" strokeWidth="1.55" strokeLinecap="round"/><path d="M4 10.1l5.5-5.5a1.6 1.6 0 012.3 0l2.4 2.4a1.6 1.6 0 010 2.3l-5.2 5.2H6.1L4 12.4a1.6 1.6 0 010-2.3z" stroke="currentColor" strokeWidth="1.55" strokeLinejoin="round"/><path d="M8.3 5.8l4.1 4.1" stroke="currentColor" strokeWidth="1.55" strokeLinecap="round"/></svg>; }
 function ProfileIcon() { return <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="6.2" r="3.1" stroke="currentColor" strokeWidth="1.7"/><path d="M3.4 15.2c.8-3 2.7-4.5 5.6-4.5s4.8 1.5 5.6 4.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/></svg>; }
 function DockLeftIcon() { return <svg width="19" height="19" viewBox="0 0 19 19" fill="none"><rect x="3" y="3.2" width="13" height="12.6" rx="2.2" stroke="currentColor" strokeWidth="1.55"/><path d="M7.2 3.5v12" stroke="currentColor" strokeWidth="1.55"/><path d="M11.7 7.2L9.4 9.5l2.3 2.3" stroke="currentColor" strokeWidth="1.55" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
 function DockBottomIcon() { return <svg width="19" height="19" viewBox="0 0 19 19" fill="none"><rect x="3" y="3.2" width="13" height="12.6" rx="2.2" stroke="currentColor" strokeWidth="1.55"/><path d="M3.4 11.8h12.2" stroke="currentColor" strokeWidth="1.55"/><path d="M7.2 7.7L9.5 10l2.3-2.3" stroke="currentColor" strokeWidth="1.55" strokeLinecap="round" strokeLinejoin="round"/></svg>; }

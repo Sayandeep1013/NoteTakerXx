@@ -101,6 +101,7 @@ interface NotesStore {
   selectionMode: "normal" | "import";
   universalSearchOpen: boolean;
   drawingMode: boolean;
+  eraserMode: boolean;
   strokeColor: string;
 
   addNote: () => void;
@@ -152,6 +153,7 @@ interface NotesStore {
   setSelectionMode: (mode: "normal" | "import") => void;
   setUniversalSearchOpen: (open: boolean) => void;
   setDrawingMode: (active: boolean) => void;
+  setEraserMode: (active: boolean) => void;
   setStrokeColor: (color: string) => void;
 }
 
@@ -370,6 +372,7 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
   selectionMode: "normal",
   universalSearchOpen: false,
   drawingMode: false,
+  eraserMode: false,
   strokeColor: "#7c8fd8",
   focusedNoteId: null,
   pendingInsert: null,
@@ -680,6 +683,7 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
   clearSelection: () => set({ selectedItemIds: [] }),
   setSelectionMode: (mode) => set({ selectionMode: mode }),
   setUniversalSearchOpen: (open) => set({ universalSearchOpen: open }),
-  setDrawingMode: (active) => set({ drawingMode: active, badgeMode: active ? null : get().badgeMode, connectionMode: active ? null : get().connectionMode }),
+  setDrawingMode: (active) => set({ drawingMode: active, eraserMode: active ? false : get().eraserMode, badgeMode: active ? null : get().badgeMode, connectionMode: active ? null : get().connectionMode }),
+  setEraserMode: (active) => set({ eraserMode: active, drawingMode: active ? false : get().drawingMode, badgeMode: active ? null : get().badgeMode, connectionMode: active ? null : get().connectionMode }),
   setStrokeColor: (color) => set({ strokeColor: color }),
 }));
