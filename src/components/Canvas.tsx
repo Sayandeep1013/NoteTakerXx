@@ -26,9 +26,28 @@ function randomNoteColor(): NoteColor {
   return NOTE_COLOR_KEYS[Math.floor(Math.random() * NOTE_COLOR_KEYS.length)];
 }
 
+function distanceToSegment(px: number, py: number, ax: number, ay: number, bx: number, by: number) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return Math.hypot(px - ax, py - ay);
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
+function distanceToStroke(point: { x: number; y: number }, points: { x: number; y: number }[]) {
+  if (points.length === 0) return Infinity;
+  if (points.length === 1) return Math.hypot(point.x - points[0].x, point.y - points[0].y);
+  let best = Infinity;
+  for (let i = 1; i < points.length; i += 1) {
+    best = Math.min(best, distanceToSegment(point.x, point.y, points[i - 1].x, points[i - 1].y, points[i].x, points[i].y));
+  }
+  return best;
+}
+
 export default function Canvas() {
   const {
-    notes, canvas, folderPan, setPan, setZoom, zoomBy, resetZoom, addNote, addStroke, connectionMode, setConnectionMode, badgeFilter,
+    notes, canvas, folderPan, setPan, setZoom, zoomBy, resetZoom, addNote, addStroke, deleteNote, connectionMode, setConnectionMode, badgeFilter,
     coffeeVisible, setCoffeeVisible, activeFolderId, goToParentFolder, setActiveFolderId,
     selectedItemIds, clearSelection, moveItemsToFolder, setSelectionMode,
     drawingMode, eraserMode, strokeColor, setDrawingMode, setEraserMode,
@@ -169,6 +188,24 @@ export default function Canvas() {
     // Only activate pan on the backdrop (canvas-pan-layer), not on notes
     const target = e.target as HTMLElement;
     if (!target.classList.contains("canvas-pan-layer")) return;
+    if (eraserMode) {
+      const point = screenToWorld(e.clientX, e.clientY);
+      const zoom = panRef.current.zoom || 1;
+      const hitThreshold = Math.max(10 / zoom, 8);
+      const hit = notes
+        .filter((item) => item.parentId === activeFolderId && item.type === "stroke")
+        .map((stroke) => ({
+          stroke,
+          distance: distanceToStroke(point, stroke.strokePoints ?? []),
+        }))
+        .sort((a, b) => a.distance - b.distance)[0];
+      if (hit && hit.distance <= hitThreshold + (hit.stroke.strokeWidth ?? 4)) {
+        e.preventDefault();
+        e.stopPropagation();
+        deleteNote(hit.stroke.id);
+      }
+      return;
+    }
     if (drawingMode) {
       const point = screenToWorld(e.clientX, e.clientY);
       drawingRef.current = { active: true, points: [point] };
