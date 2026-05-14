@@ -40,11 +40,16 @@ export interface CustomBadge {
 
 export { DEFAULT_BADGES } from "@/lib/badges";
 
+export type AnchorSide = "top" | "bottom" | "left" | "right";
+
 export interface Connection {
   id: string;
   sourceId: string;
   targetId: string;
   color: string;
+  connectionType?: "rope" | "arrow";
+  sourceAnchor?: AnchorSide;
+  targetAnchor?: AnchorSide;
 }
 
 export interface Note {
@@ -103,8 +108,14 @@ interface NotesStore {
   drawingMode: boolean;
   eraserMode: boolean;
   strokeColor: string;
+  dotGridEffect: boolean;
+  arrowMode: boolean;
+  arrowSourceId: string | null;
+  arrowSourceAnchor: AnchorSide | null;
+  ropeMode: boolean;
 
   addNote: () => void;
+  addNoteWithContent: (content: { title?: string; body?: string }) => void;
   addFolder: (itemIds?: string[]) => string;
   addPhoto: (url: string, imagePath?: string | null, caption?: string, naturalWidth?: number, naturalHeight?: number) => void;
   addStroke: (points: StrokePoint[], color: string, width?: number) => void;
@@ -128,9 +139,13 @@ interface NotesStore {
   deleteCustomBadge: (badgeId: string) => void;
   setCustomBadges: (badges: CustomBadge[]) => void;
   setNewNoteId: (id: string | null) => void;
-  addConnection: (sourceId: string, targetId: string, color?: string) => void;
+  addConnection: (sourceId: string, targetId: string, color?: string, connectionType?: "rope" | "arrow", sourceAnchor?: AnchorSide, targetAnchor?: AnchorSide) => void;
   deleteConnection: (id: string) => void;
   setConnectionMode: (id: string | null) => void;
+  setDotGridEffect: (v: boolean) => void;
+  setArrowMode: (active: boolean) => void;
+  setArrowSource: (noteId: string | null, anchor?: AnchorSide) => void;
+  setRopeMode: (active: boolean) => void;
   openFolder: (id: string) => void;
   goToParentFolder: () => void;
   setActiveFolderId: (id: CanvasParentId) => void;
@@ -374,6 +389,11 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
   drawingMode: false,
   eraserMode: false,
   strokeColor: "#7c8fd8",
+  dotGridEffect: true,
+  arrowMode: false,
+  arrowSourceId: null,
+  arrowSourceAnchor: null,
+  ropeMode: false,
   focusedNoteId: null,
   pendingInsert: null,
   badgeFilter: null,
@@ -383,10 +403,10 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
   addNote: () => {
     const { notes, topZ, canvas, sidebarOpen, activeFolderId } = get();
     const size = noteSizeForZoom(canvas.zoom || DEFAULT_ZOOM);
-    const slot = findVisibleSlot(notes.map(normalizeItem), activeFolderId, canvas, sidebarOpen, size);
+    const slot = findVisibleSlot(notes, activeFolderId, canvas, sidebarOpen, size);
     const newId = createItemId();
     set({
-      notes: [...notes.map(normalizeItem), normalizeItem({
+      notes: [...notes, normalizeItem({
         id: newId,
         type: "note",
         parentId: activeFolderId,
@@ -408,11 +428,33 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
     });
   },
 
+  addNoteWithContent: ({ title = "", body = "" }) => {
+    const { notes, topZ, canvas, sidebarOpen, activeFolderId } = get();
+    const size = noteSizeForZoom(canvas.zoom || DEFAULT_ZOOM);
+    const slot = findVisibleSlot(notes, activeFolderId, canvas, sidebarOpen, size);
+    set({
+      notes: [...notes, normalizeItem({
+        id: createItemId(),
+        type: "note",
+        parentId: activeFolderId,
+        x: slot.px, y: slot.py, w: size, h: size,
+        color: randomNoteColor(),
+        rotation: randomRotation(),
+        title, body,
+        locked: false,
+        zIndex: topZ + 1,
+        badges: [],
+        createdAt: new Date().toISOString(),
+      })],
+      topZ: topZ + 1,
+      // no newNoteId — pasted content doesn't need auto-focus
+    });
+  },
+
   addFolder: (itemIds = get().selectedItemIds) => {
     const state = get();
-    const notes = state.notes.map(normalizeItem);
     const folderId = createItemId();
-    const slot = findFolderSlot(notes, state.activeFolderId, state.canvas, state.sidebarOpen);
+    const slot = findFolderSlot(state.notes, state.activeFolderId, state.canvas, state.sidebarOpen);
     const folder = normalizeItem({
       id: folderId,
       type: "folder",
@@ -432,7 +474,7 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
     });
     const movableIds = itemIds.filter((id) => id !== folderId);
     set({
-      notes: moveIntoFolder([...notes, folder], movableIds, folderId),
+      notes: moveIntoFolder([...state.notes, folder], movableIds, folderId),
       selectedItemIds: [],
       topZ: state.topZ + 1,
     });
@@ -441,11 +483,10 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
 
   addPhoto: (url, imagePath = null, caption = "", naturalWidth, naturalHeight) => {
     const { notes, topZ, canvas, sidebarOpen, activeFolderId } = get();
-    const normalized = notes.map(normalizeItem);
     const size = photoGridSize(naturalWidth, naturalHeight);
-    const slot = findVisibleSlot(normalized, activeFolderId, canvas, sidebarOpen, Math.max(size.w, size.h));
+    const slot = findVisibleSlot(notes, activeFolderId, canvas, sidebarOpen, Math.max(size.w, size.h));
     set({
-      notes: [...normalized, normalizeItem({
+      notes: [...notes, normalizeItem({
         id: createItemId(),
         type: "photo",
         parentId: activeFolderId,
@@ -476,9 +517,8 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
     const minY = Math.min(...points.map((p) => p.y));
     const maxX = Math.max(...points.map((p) => p.x));
     const maxY = Math.max(...points.map((p) => p.y));
-    const normalized = state.notes.map(normalizeItem);
     set({
-      notes: [...normalized, normalizeItem({
+      notes: [...state.notes, normalizeItem({
         id: createItemId(),
         type: "stroke",
         parentId: state.activeFolderId,
@@ -505,7 +545,7 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
   updateNote: (id, patch) =>
     set((s) => ({
       notes: s.notes.map((n) => {
-        if (n.id !== id) return normalizeItem(n);
+        if (n.id !== id) return n;
         const next = normalizeItem({ ...n, ...patch });
         if (next.type === "folder") {
           next.folderName = patch.folderName ?? patch.title ?? next.folderName ?? "Untitled Folder";
@@ -523,14 +563,16 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
 
   deleteItemTree: (id) =>
     set((s) => {
-      const notes = s.notes.map(normalizeItem);
-      const ids = new Set(collectDescendantIds(notes, id));
+      const ids = new Set(collectDescendantIds(s.notes, id));
+      const nextFolderPan = { ...s.folderPan };
+      ids.forEach((deletedId) => { delete nextFolderPan[deletedId]; });
       return {
-        notes: notes.filter((n) => !ids.has(n.id)),
+        notes: s.notes.filter((n) => !ids.has(n.id)),
         connections: s.connections.filter((c) => !ids.has(c.sourceId) && !ids.has(c.targetId)),
         selectedItemIds: s.selectedItemIds.filter((selectedId) => !ids.has(selectedId)),
         pendingDeletedItemIds: [...new Set([...s.pendingDeletedItemIds, ...ids])],
         activeFolderId: ids.has(s.activeFolderId ?? "") ? null : s.activeFolderId,
+        folderPan: nextFolderPan,
       };
     }),
 
@@ -542,7 +584,7 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
   bringToFront: (id) => {
     const next = get().topZ + 1;
     set((s) => ({
-      notes: s.notes.map((n) => (n.id === id ? { ...normalizeItem(n), zIndex: next } : normalizeItem(n))),
+      notes: s.notes.map((n) => (n.id === id ? { ...n, zIndex: next } : n)),
       topZ: next,
     }));
   },
@@ -585,11 +627,15 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
   setCoffeeVisible: (v) => set({ coffeeVisible: v }),
   setBadgeMode: (id) => set({ badgeMode: id }),
   setNewNoteId: (id) => set({ newNoteId: id }),
-  addConnection: (sourceId, targetId, color = "#e74c3c") =>
-    set((s) => ({ connections: [...s.connections, { id: nanoid(), sourceId, targetId, color }] })),
+  addConnection: (sourceId, targetId, color = "#e74c3c", connectionType = "rope", sourceAnchor, targetAnchor) =>
+    set((s) => ({ connections: [...s.connections, { id: globalThis.crypto?.randomUUID?.() ?? nanoid(), sourceId, targetId, color, connectionType, sourceAnchor, targetAnchor }] })),
   deleteConnection: (id) =>
     set((s) => ({ connections: s.connections.filter((c) => c.id !== id) })),
   setConnectionMode: (id) => set({ connectionMode: id }),
+  setDotGridEffect: (v) => set({ dotGridEffect: v }),
+  setArrowMode: (active) => set({ arrowMode: active, arrowSourceId: null, arrowSourceAnchor: null, drawingMode: active ? false : get().drawingMode, eraserMode: active ? false : get().eraserMode, ropeMode: active ? false : get().ropeMode, badgeMode: active ? null : get().badgeMode, connectionMode: active ? null : get().connectionMode }),
+  setRopeMode: (active) => set({ ropeMode: active, connectionMode: active ? null : get().connectionMode, drawingMode: active ? false : get().drawingMode, eraserMode: active ? false : get().eraserMode, arrowMode: active ? false : get().arrowMode, badgeMode: active ? null : get().badgeMode }),
+  setArrowSource: (noteId, anchor) => set({ arrowSourceId: noteId ?? null, arrowSourceAnchor: anchor ?? null }),
 
   openFolder: (id) =>
     set((s) => {
@@ -617,27 +663,26 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
 
   moveItemsToFolder: (itemIds, folderId) =>
     set((s) => {
-      const notes = s.notes.map(normalizeItem);
       const safeIds = itemIds.filter((id) => {
         if (!folderId) return true;
-        const item = notes.find((n) => n.id === id);
+        const item = s.notes.find((n) => n.id === id);
         if (!item) return false;
         if (item.type !== "folder") return true;
         return id !== folderId && !get().isDescendantFolder(id, folderId);
       });
       return {
-        notes: moveIntoFolder(notes, safeIds, folderId),
+        notes: moveIntoFolder(s.notes, safeIds, folderId),
         selectedItemIds: [],
       };
     }),
 
   moveItemsByGrid: (itemIds, dx, dy) =>
     set((s) => ({
-      notes: s.notes.map((n) => itemIds.includes(n.id) ? { ...normalizeItem(n), x: n.x + dx, y: n.y + dy } : normalizeItem(n)),
+      notes: s.notes.map((n) => itemIds.includes(n.id) ? { ...n, x: n.x + dx, y: n.y + dy } : n),
     })),
 
   isDescendantFolder: (folderId, possibleDescendantId) => {
-    const notes = get().notes.map(normalizeItem);
+    const notes = get().notes;
     let cursor = notes.find((n) => n.id === possibleDescendantId);
     while (cursor?.parentId) {
       if (cursor.parentId === folderId) return true;
@@ -656,21 +701,20 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
   deleteCustomBadge: (badgeId) =>
     set((s) => ({
       customBadges: s.customBadges.filter((badge) => badge.id !== badgeId),
-      notes: s.notes.map((note) => (
+      notes: s.notes.map((note) =>
         note.badges.includes(badgeId)
-          ? { ...normalizeItem(note), badges: note.badges.filter((id) => id !== badgeId) }
-          : normalizeItem(note)
-      )),
+          ? { ...note, badges: note.badges.filter((id) => id !== badgeId) }
+          : note
+      ),
       badgeMode: s.badgeMode === badgeId ? null : s.badgeMode,
       badgeFilter: s.badgeFilter === badgeId ? null : s.badgeFilter,
     })),
   toggleNoteBadge: (noteId, badgeId) =>
     set((s) => ({
       notes: s.notes.map((n) => {
-        const item = normalizeItem(n);
-        if (item.id !== noteId) return item;
-        const has = item.badges.includes(badgeId);
-        return { ...item, badges: has ? item.badges.filter((b) => b !== badgeId) : [...item.badges, badgeId] };
+        if (n.id !== noteId) return n;
+        const has = n.badges.includes(badgeId);
+        return { ...n, badges: has ? n.badges.filter((b) => b !== badgeId) : [...n.badges, badgeId] };
       }),
     })),
   toggleSelectedItem: (id) =>
@@ -683,7 +727,7 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
   clearSelection: () => set({ selectedItemIds: [] }),
   setSelectionMode: (mode) => set({ selectionMode: mode }),
   setUniversalSearchOpen: (open) => set({ universalSearchOpen: open }),
-  setDrawingMode: (active) => set({ drawingMode: active, eraserMode: active ? false : get().eraserMode, badgeMode: active ? null : get().badgeMode, connectionMode: active ? null : get().connectionMode }),
-  setEraserMode: (active) => set({ eraserMode: active, drawingMode: active ? false : get().drawingMode, badgeMode: active ? null : get().badgeMode, connectionMode: active ? null : get().connectionMode }),
+  setDrawingMode: (active) => set({ drawingMode: active, eraserMode: active ? false : get().eraserMode, arrowMode: active ? false : get().arrowMode, ropeMode: active ? false : get().ropeMode, arrowSourceId: null, arrowSourceAnchor: null, badgeMode: active ? null : get().badgeMode, connectionMode: active ? null : get().connectionMode }),
+  setEraserMode: (active) => set({ eraserMode: active, drawingMode: active ? false : get().drawingMode, arrowMode: active ? false : get().arrowMode, ropeMode: active ? false : get().ropeMode, arrowSourceId: null, arrowSourceAnchor: null, badgeMode: active ? null : get().badgeMode, connectionMode: active ? null : get().connectionMode }),
   setStrokeColor: (color) => set({ strokeColor: color }),
 }));

@@ -7,34 +7,18 @@ import { THEMES } from "@/lib/themes";
 const DOT_SPACING   = 40;
 const DOT_BASE_R    = 1.9;
 const DOT_PEAK_R    = 5;
-const BALL_RADIUS   = 110;   // 220px diameter — noticeable but not overwhelming
+const BALL_RADIUS   = 110;
 const PUSH_STRENGTH = 18;
 
 // Ball-under-cloth model:
 //   t = linear falloff 1→0 from center to edge of ball
-//
-//   liftT  = t²           → max at center (crown of ball), fades toward edge
-//   pushT  = 4·t·(1-t)    → 0 at center, peaks at t=0.5 (equator), 0 at edge
-//
-// liftT drives dot SIZE (the crown pushes cloth straight up → bigger dot)
-// pushT drives radial DISPLACEMENT (the slope pushes cloth sideways → moved dot)
-//
-// Together they produce the illusion of cloth draping over a sphere.
+//   liftT  = t²           → max at center (crown of ball)
+//   pushT  = 4·t·(1-t)    → peaks at t=0.5 (equator), 0 at edge
 
-// ── Theme colors ────────────────────────────────────────────
 interface DotTheme {
   base: [number, number, number, number];
   hot:  [number, number, number, number];
 }
-
-const LIGHT: DotTheme = {
-  base: [60, 50, 80, 0.22],       // warm dark violet-gray
-  hot:  [45, 35, 140, 0.82],      // deep indigo near cursor crown
-};
-const DARK: DotTheme = {
-  base: [220, 215, 255, 0.18],    // cool dim white-violet
-  hot:  [235, 230, 255, 0.90],    // bright warm white at crown
-};
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
@@ -49,8 +33,12 @@ export default function DotGrid() {
   panRef.current = { x: panX, y: panY, zoom };
 
   const themeKey = useNotesStore((s) => s.theme);
-  const themeRef = useRef<DotTheme>(LIGHT);
+  const themeRef = useRef<DotTheme>({ base: [60, 50, 80, 0.22], hot: [45, 35, 140, 0.82] });
   themeRef.current = { base: THEMES[themeKey].dotBase, hot: THEMES[themeKey].dotHot };
+
+  const dotGridEffect = useNotesStore((s) => s.dotGridEffect);
+  const effectRef = useRef(true);
+  effectRef.current = dotGridEffect;
 
   useEffect(() => {
     const cvs = canvasRef.current;
@@ -69,6 +57,7 @@ export default function DotGrid() {
       const { x: px, y: py, zoom: z } = panRef.current;
       const { x: mx, y: my } = mouseRef.current;
       const theme = themeRef.current;
+      const effect = effectRef.current;
       const W = cvs.width, H = cvs.height;
       const spacing = Math.max(8, DOT_SPACING * z);
       const baseRadius = Math.max(0.8, DOT_BASE_R * Math.sqrt(z));
@@ -84,9 +73,25 @@ export default function DotGrid() {
       const [br, bg, bb, ba] = theme.base;
       const [hr, hg, hb, ha] = theme.hot;
 
+      // When effect is off, draw all dots in one batch with a single fillStyle
+      if (!effect) {
+        ctx.beginPath();
+        ctx.fillStyle = `rgba(${br},${bg},${bb},${ba.toFixed(2)})`;
+        for (let col = startCol; col <= endCol; col++) {
+          for (let row = startRow; row <= endRow; row++) {
+            const x = col * spacing + px;
+            const y = row * spacing + py;
+            ctx.moveTo(x + baseRadius, y);
+            ctx.arc(x, y, baseRadius, 0, Math.PI * 2);
+          }
+        }
+        ctx.fill();
+        rafId = requestAnimationFrame(draw);
+        return;
+      }
+
       for (let col = startCol; col <= endCol; col++) {
         for (let row = startRow; row <= endRow; row++) {
-          // Rest position of this dot (screen coords)
           const restX = col * spacing + px;
           const restY = row * spacing + py;
 
@@ -100,20 +105,17 @@ export default function DotGrid() {
           let r = br, g = bg, b = bb, a = ba;
 
           if (dist < BALL_RADIUS && dist > 0) {
-            const t      = 1 - dist / BALL_RADIUS;             // 1 at center, 0 at edge
-            const liftT  = t * t;                               // crown lift (max at center)
-            const pushT  = 4 * t * (1 - t);                    // equatorial push (max at mid)
+            const t      = 1 - dist / BALL_RADIUS;
+            const liftT  = t * t;
+            const pushT  = 4 * t * (1 - t);
 
-            // Radial displacement — push dot away from mouse
             const pushMag = PUSH_STRENGTH * pushT;
             const angle   = Math.atan2(ddy, ddx);
             finalX = restX + Math.cos(angle) * pushMag;
             finalY = restY + Math.sin(angle) * pushMag;
 
-            // Size — grows at the crown
             radius = lerp(baseRadius, peakRadius, liftT);
 
-            // Color — transition base → hot
             r = Math.round(lerp(br, hr, liftT));
             g = Math.round(lerp(bg, hg, liftT));
             b = Math.round(lerp(bb, hb, liftT));

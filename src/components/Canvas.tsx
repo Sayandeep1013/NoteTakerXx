@@ -13,6 +13,8 @@ import ConnectionLayer from "./ConnectionLayer";
 import UniversalSearch from "./UniversalSearch";
 import { useHudScale } from "@/hooks/useHudScale";
 import { useTheme } from "@/hooks/useTheme";
+import { useAuth } from "@/hooks/useAuth";
+import { usePhotoAdd } from "@/hooks/usePhotoAdd";
 import { NOTE_COLOR_KEYS, type NoteColor } from "@/lib/colors";
 import upiQr from "../../images/upi qr.jpeg";
 
@@ -20,6 +22,7 @@ const SHOW_COFFEE_BUTTON = true;
 const ACTIVE_FOLDER_KEY = "nxtaker_active_folder_id";
 const FOLDER_PAN_KEY = "nxtaker_folder_pan";
 const CANVAS_VIEW_KEY = "nxtaker_canvas_view";
+const CONNECTIONS_KEY = "nxtaker_connections";
 const ZOOM_STEP = 1.15;
 
 function randomNoteColor(): NoteColor {
@@ -47,11 +50,16 @@ function distanceToStroke(point: { x: number; y: number }, points: { x: number; 
 
 export default function Canvas() {
   const {
-    notes, canvas, folderPan, setPan, setZoom, zoomBy, resetZoom, addNote, addStroke, deleteNote, connectionMode, setConnectionMode, badgeFilter,
+    notes, canvas, folderPan, connections, setPan, setZoom, zoomBy, resetZoom, addNote, addNoteWithContent, addStroke, deleteNote,
+    connectionMode, setConnectionMode, badgeFilter,
     coffeeVisible, setCoffeeVisible, activeFolderId, goToParentFolder, setActiveFolderId,
     selectedItemIds, clearSelection, moveItemsToFolder, setSelectionMode,
     drawingMode, eraserMode, strokeColor, setDrawingMode, setEraserMode,
+    arrowMode, setArrowMode, ropeMode, setRopeMode,
   } = useNotesStore();
+  const { user } = useAuth();
+  const { handlePhotoUpload } = usePhotoAdd(user);
+  const photoInputRef = useRef<HTMLInputElement>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
   const panState = useRef({ active: false, startX: 0, startY: 0, panX: 0, panY: 0 });
   const panRef = useRef({ x: canvas.panX, y: canvas.panY, zoom: canvas.zoom || 1 });
@@ -124,17 +132,31 @@ export default function Canvas() {
     if (!folderExists) setActiveFolderId(null);
   }, [activeFolderId, notes, setActiveFolderId]);
 
-  // Save pan position when it changes (debounced)
+  // Load saved connections
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(CONNECTIONS_KEY);
+      if (!saved) return;
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        useNotesStore.setState({ connections: parsed });
+      }
+    } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Save pan position + connections when they change (debounced)
   useEffect(() => {
     const timer = setTimeout(() => {
       try {
         localStorage.setItem("canvas-pan", JSON.stringify(canvas));
         localStorage.setItem(CANVAS_VIEW_KEY, JSON.stringify(canvas));
         localStorage.setItem(FOLDER_PAN_KEY, JSON.stringify(folderPan));
+        localStorage.setItem(CONNECTIONS_KEY, JSON.stringify(connections));
       } catch {}
     }, 500);
     return () => clearTimeout(timer);
-  }, [canvas, folderPan]);
+  }, [canvas, folderPan, connections]);
 
   // Non-passive wheel to preventDefault and pan
   useEffect(() => {
@@ -169,12 +191,18 @@ export default function Canvas() {
     return () => window.removeEventListener("keydown", onKey);
   }, [resetZoom, zoomBy]);
 
-  // Escape cancels connection mode
+  // Escape cancels connection/arrow/rope mode
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && connectionMode) setConnectionMode(null); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (connectionMode) setConnectionMode(null);
+      if (arrowMode) setArrowMode(false);
+      if (ropeMode && connectionMode) setConnectionMode(null); // cancel mid-rope
+      else if (ropeMode) setRopeMode(false);
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [connectionMode, setConnectionMode]);
+  }, [connectionMode, setConnectionMode, arrowMode, setArrowMode, ropeMode, setRopeMode]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -183,6 +211,51 @@ export default function Canvas() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [clearSelection, importTargetFolderId, selectedItemIds.length]);
+
+  // Ctrl+V paste: text → new note, image → new photo
+  useEffect(() => {
+    const onPaste = async (e: ClipboardEvent) => {
+      // Don't intercept paste inside inputs/textareas/contenteditable
+      const target = e.target as HTMLElement | null;
+      if (
+        target?.tagName === "INPUT" ||
+        target?.tagName === "TEXTAREA" ||
+        target?.isContentEditable
+      ) return;
+
+      const items = Array.from(e.clipboardData?.items ?? []);
+
+      // Image takes priority over text
+      const imageItem = items.find((it) => it.type.startsWith("image/"));
+      if (imageItem) {
+        const file = imageItem.getAsFile();
+        if (file) {
+          e.preventDefault();
+          await handlePhotoUpload(file);
+          return;
+        }
+      }
+
+      // Plain text → new note
+      const textItem = items.find((it) => it.type === "text/plain");
+      if (textItem) {
+        e.preventDefault();
+        textItem.getAsString((raw) => {
+          const text = raw.trim();
+          if (!text) return;
+          // If multiple lines, first line becomes title, rest becomes body
+          const lines = text.split(/\r?\n/);
+          const title = lines.length > 1 ? lines[0].trim() : "";
+          const body = lines.length > 1 ? lines.slice(1).join("\n").trimStart() : text;
+          addNoteWithContent({ title, body });
+        });
+      }
+    };
+
+    document.addEventListener("paste", onPaste);
+    return () => document.removeEventListener("paste", onPaste);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handlePhotoUpload, addNoteWithContent]);
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     // Only activate pan on the backdrop (canvas-pan-layer), not on notes
@@ -284,7 +357,7 @@ export default function Canvas() {
         className="canvas-world"
         style={{ transform: `translate(${canvas.panX}px, ${canvas.panY}px) scale(${canvas.zoom || 1})`, zIndex: 2 }}
       >
-        <ConnectionLayer notes={visibleNotes} gridUnit={80} />
+        <ConnectionLayer notes={[...visibleNotes, ...visiblePhotos]} gridUnit={80} />
         <StrokeLayer strokes={visibleStrokes} liveStroke={liveStroke} liveColor={strokeColor} eraserMode={eraserMode} />
         {visibleNotes.map((note) => (
           <Note key={note.id} note={note} gridUnit={80} />
@@ -303,6 +376,59 @@ export default function Canvas() {
         background: "radial-gradient(ellipse at 50% 50%, transparent 55%, rgba(0,0,0,0.07) 100%)",
       }} />
 
+      {/* Photo FAB — stacked above the note FAB */}
+      <div
+        style={{
+          position: "fixed",
+          bottom: 96,
+          right: 36,
+          zIndex: 509,
+        }}
+      >
+        <button
+          onClick={() => photoInputRef.current?.click()}
+          title="Add photo"
+          style={{
+            width: 46, height: 46, borderRadius: "50%",
+            background: "var(--bg-sidebar)",
+            border: "1.5px solid var(--sidebar-border)",
+            color: "var(--text-ui)",
+            cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+            transition: "transform 150ms, box-shadow 150ms",
+            boxShadow: "0 4px 16px rgba(0,0,0,0.18)",
+          }}
+          onMouseEnter={(e) => {
+            const b = e.currentTarget as HTMLElement;
+            b.style.transform = "scale(1.08)";
+            b.style.boxShadow = "0 6px 24px rgba(0,0,0,0.26)";
+          }}
+          onMouseLeave={(e) => {
+            const b = e.currentTarget as HTMLElement;
+            b.style.transform = "scale(1)";
+            b.style.boxShadow = "0 4px 16px rgba(0,0,0,0.18)";
+          }}
+        >
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <rect x="2" y="4" width="16" height="13" rx="2.2" stroke="currentColor" strokeWidth="1.7"/>
+            <path d="M2.5 8.5l3-3 3 3 3.5-4 4.5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            <circle cx="14.5" cy="7" r="1.3" fill="currentColor"/>
+          </svg>
+        </button>
+        <input
+          ref={photoInputRef}
+          type="file"
+          accept="image/*"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.currentTarget.value = "";
+            if (!file) return;
+            void handlePhotoUpload(file);
+          }}
+        />
+      </div>
+
+      {/* Note FAB */}
       <div
         style={{
           position: "fixed",
@@ -397,22 +523,22 @@ export default function Canvas() {
         />
       )}
 
-      {/* Connection mode indicator */}
+      {ropeMode && !connectionMode && (
+        <ModeBanner onClick={() => setRopeMode(false)} color="#c0392b" shadow="rgba(192,57,43,0.45)">
+          Rope mode — click a note to start, click another to connect · Esc to exit
+        </ModeBanner>
+      )}
       {connectionMode && (
-        <div
-          onClick={() => setConnectionMode(null)}
-          style={{
-            position: "fixed", top: 16, left: "50%", transform: "translateX(-50%)",
-            background: "#d84a42",
-            color: "#fff", fontSize: 12, fontWeight: 600,
-            padding: "7px 18px", borderRadius: 20,
-            zIndex: 490, cursor: "pointer",
-            boxShadow: "0 4px 16px rgba(231,76,60,0.4)",
-            letterSpacing: "0.02em",
-          }}
-        >
-          Shift+click another note to connect — click here or press Esc to cancel
-        </div>
+        <ModeBanner onClick={() => setConnectionMode(null)} color="#d84a42" shadow="rgba(231,76,60,0.4)">
+          {ropeMode
+            ? "Click another note to connect with a rope · click here to cancel"
+            : "Shift+click another note to connect · click here or Esc to cancel"}
+        </ModeBanner>
+      )}
+      {arrowMode && (
+        <ModeBanner onClick={() => setArrowMode(false)} color="var(--accent)" shadow="rgba(92,107,192,0.45)">
+          Arrow mode — click an edge dot on a note, then another note&apos;s edge dot · Esc to cancel
+        </ModeBanner>
       )}
 
       <Sidebar />
@@ -620,6 +746,34 @@ function ZoomHud({
   );
 }
 
+// ── Note-style notification / toast ─────────────────────────────
+// Looks like a sticky note so hints feel like part of the canvas.
+
+function ModeBanner({ children, onClick, color, shadow }: {
+  children: React.ReactNode;
+  onClick: () => void;
+  color: string;
+  shadow: string;
+}) {
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        position: "fixed", top: 16, left: "50%", transform: "translateX(-50%)",
+        background: color,
+        color: "#fff", fontSize: 12, fontWeight: 600,
+        padding: "7px 18px", borderRadius: 20,
+        zIndex: 490, cursor: "pointer",
+        boxShadow: `0 4px 16px ${shadow}`,
+        letterSpacing: "0.02em",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
 function FirstRunGuide({ onAddNote }: { onAddNote: () => void }) {
   return (
     <div
@@ -647,15 +801,10 @@ function FirstRunGuide({ onAddNote }: { onAddNote: () => void }) {
       <button
         onClick={onAddNote}
         style={{
-          height: 38,
-          padding: "0 16px",
-          borderRadius: 10,
-          border: "none",
-          background: "var(--accent)",
-          color: "#fff",
-          fontFamily: "inherit",
-          fontWeight: 850,
-          cursor: "pointer",
+          height: 38, padding: "0 16px", borderRadius: 10,
+          border: "none", background: "var(--accent)",
+          color: "#fff", fontFamily: "inherit",
+          fontWeight: 850, cursor: "pointer",
         }}
       >
         Add first note
@@ -759,7 +908,7 @@ function CoffeeButton({ onHide }: { onHide: () => void }) {
         style={{
           position: "fixed",
           right: 36,
-          bottom: 98,
+          bottom: 152,
           zIndex: 500,
           width: 44,
           height: 44,
@@ -809,7 +958,7 @@ function CoffeeButton({ onHide }: { onHide: () => void }) {
               width: "min(360px, 92vw)",
               borderRadius: 16,
               padding: "34px 28px 24px",
-              background: paper,
+              backgroundColor: paper,
               backgroundImage: `repeating-linear-gradient(transparent, transparent 23px, ${line} 23px, ${line} 24.5px)`,
               backgroundSize: "100% 24.5px",
               color: text,

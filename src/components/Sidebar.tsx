@@ -10,6 +10,8 @@ import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useProfile } from "@/hooks/useProfile";
 import { useNoteSync } from "@/hooks/useNoteSync";
+import { useConnectionSync } from "@/hooks/useConnectionSync";
+import { usePhotoAdd } from "@/hooks/usePhotoAdd";
 import ProfileModal from "./ProfileModal";
 import type { BadgeDef } from "@/lib/badges";
 import { NOTE_COLOR_KEYS, type NoteColor } from "@/lib/colors";
@@ -18,6 +20,7 @@ import { useHudScale } from "@/hooks/useHudScale";
 const DOCK_KEY = "nxtaker_dock_position";
 const DOCK_SIDE_KEY = "nxtaker_dock_side";
 const COFFEE_KEY = "nxtaker_coffee_visible";
+const DOT_GRID_EFFECT_KEY = "nxtaker_dot_grid_effect";
 const GUEST_BADGES_KEY = "nxtaker_custom_badges";
 const PHOTOS_BUCKET_DISABLED_KEY = "nxtaker_photos_bucket_disabled";
 const DOCK_W = 768;
@@ -43,6 +46,7 @@ export default function Sidebar() {
     bringToFront, setHighlightedNoteId,
     addFolder, addPhoto, activeFolderId, setActiveFolderId,
     setUniversalSearchOpen, drawingMode, setDrawingMode, eraserMode, setEraserMode, strokeColor, setStrokeColor,
+    arrowMode, setArrowMode, dotGridEffect, setDotGridEffect, ropeMode, setRopeMode,
   } = useNotesStore();
   const customBadgeRef = useRef<HTMLInputElement>(null);
   const photoRef = useRef<HTMLInputElement>(null);
@@ -52,8 +56,9 @@ export default function Sidebar() {
   const { user, loading, signInWithGoogle, signOut } = useAuth();
   const { profile } = useProfile(user);
   const { showMergePrompt, cachedCount, mergeLocalToCloud, discardLocal, dbError } = useNoteSync(user, loading);
+  useConnectionSync(user, !loading);
   const [showProfile, setShowProfile] = useState(false);
-  const [panel, setPanel] = useState<"theme" | "filter" | "pen" | "erase" | null>(null);
+  const [panel, setPanel] = useState<"theme" | "filter" | "pen" | "erase" | "badges" | null>(null);
   const [deleteBadge, setDeleteBadge] = useState<{ id: string; label: string; count: number } | null>(null);
   const hudScale = useHudScale();
 
@@ -90,6 +95,8 @@ export default function Sidebar() {
       if (savedSide === "bottom" || savedSide === "left") setDockSide(savedSide);
       const coffee = localStorage.getItem(COFFEE_KEY);
       if (coffee !== null) setCoffeeVisible(coffee === "true");
+      const dotEffect = localStorage.getItem(DOT_GRID_EFFECT_KEY);
+      if (dotEffect !== null) setDotGridEffect(dotEffect !== "false");
     } catch {}
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -119,6 +126,10 @@ export default function Sidebar() {
   useEffect(() => {
     try { localStorage.setItem(COFFEE_KEY, String(coffeeVisible)); } catch {}
   }, [coffeeVisible]);
+
+  useEffect(() => {
+    try { localStorage.setItem(DOT_GRID_EFFECT_KEY, String(dotGridEffect)); } catch {}
+  }, [dotGridEffect]);
 
   useEffect(() => {
     customBadgesReady.current = false;
@@ -171,28 +182,7 @@ export default function Sidebar() {
     setPanel(null);
   };
 
-  const handlePhotoUpload = async (file: File) => {
-    const resized = await resizeImageFile(file);
-    let url = resized.dataUrl;
-    let path: string | null = null;
-    if (user && localStorage.getItem(PHOTOS_BUCKET_DISABLED_KEY) !== "1") {
-      const sb = createClient();
-      path = `${user.id}/${crypto.randomUUID()}.jpg`;
-      const { error } = await sb.storage.from("photos").upload(path, resized.blob, { upsert: true, contentType: "image/jpeg" });
-      if (!error) {
-        const { data } = sb.storage.from("photos").getPublicUrl(path);
-        url = data.publicUrl;
-      } else {
-        if (error.message.toLowerCase().includes("bucket not found")) {
-          localStorage.setItem(PHOTOS_BUCKET_DISABLED_KEY, "1");
-        } else {
-          console.warn("[Dock] photo upload:", error.message);
-        }
-        path = null;
-      }
-    }
-    addPhoto(url, path, file.name.replace(/\.[^.]+$/, ""), resized.width, resized.height);
-  };
+  const { handlePhotoUpload } = usePhotoAdd(user);
 
   const createCustomBadge = (file: File, url: string) => {
     addCustomBadge({ id: `custom_${Date.now()}`, label: file.name.replace(/\.[^.]+$/, ""), url });
@@ -282,50 +272,23 @@ export default function Sidebar() {
             <DockButton active={eraserMode} onClick={() => { setEraserMode(!eraserMode); setPanel(panel === "erase" ? null : "erase"); }} title={eraserMode ? "Exit eraser mode" : "Erase pen strokes"}>
               <EraserDockIcon />
             </DockButton>
-            <div style={{
-              display: "flex",
-              flexDirection: isLeftDock ? "column" : "row",
-              gap: 6,
-              flex: "1 1 auto",
-              minWidth: isLeftDock ? 0 : 210,
-              minHeight: isLeftDock ? 120 : 0,
-              overflowX: isLeftDock ? "hidden" : "auto",
-              overflowY: isLeftDock ? "auto" : "hidden",
-              alignItems: "center",
-              padding: "0 1px",
-              scrollbarWidth: "none",
-            }} className="dock-badge-strip">
-              {allBadges.map((badge) => {
-                const active = badgeMode === badge.id;
-                const { Icon } = badge;
-                const isCustom = badge.id.startsWith("custom_");
-                return (
-                  <button
-                    key={badge.id}
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      requestDeleteBadge(badge);
-                    }}
-                    onClick={() => setBadgeMode(active ? null : badge.id)}
-                    title={isCustom ? `${active ? "Cancel" : "Place"} ${badge.label} badge. Right-click to delete.` : active ? `Cancel ${badge.label} mode` : `Place ${badge.label} badge`}
-                    style={{
-                      width: 38, height: 38, borderRadius: 11, padding: 4,
-                      background: active ? `${badge.color}22` : "transparent",
-                      border: `1.5px solid ${active ? badge.color : "transparent"}`,
-                      boxShadow: active ? `0 0 0 2px ${badge.color}33` : "none",
-                      cursor: "pointer", flex: "0 0 auto",
-                    }}
-                  >
-                    <Icon size={28} />
-                  </button>
-                );
-              })}
-              <DockButton onClick={() => customBadgeRef.current?.click()} title="Upload badge" compact>
-                <PlusTiny />
-              </DockButton>
-            </div>
+            <DockButton active={ropeMode} onClick={() => setRopeMode(!ropeMode)} title={ropeMode ? "Exit rope mode — click note to cancel" : "Connect notes with a rope — click a note to start"}>
+              <RopeDockIcon />
+            </DockButton>
+            <DockButton active={arrowMode} onClick={() => setArrowMode(!arrowMode)} title={arrowMode ? "Exit arrow mode" : "Draw arrow connections between notes"}>
+              <ArrowConnectIcon />
+            </DockButton>
+            <DockButton active={!dotGridEffect} onClick={() => setDotGridEffect(!dotGridEffect)} title={dotGridEffect ? "Turn off dot grid mouse effect" : "Turn on dot grid mouse effect"}>
+              <DotGridToggleIcon active={dotGridEffect} />
+            </DockButton>
+            <DockButton
+              active={panel === "badges" || !!badgeMode}
+              onClick={() => setPanel(panel === "badges" ? null : "badges")}
+              title="Badges"
+            >
+              <BadgeDockIcon active={!!badgeMode} badgeColor={badgeMode ? (allBadges.find(b => b.id === badgeMode)?.color ?? "var(--accent)") : undefined} />
+            </DockButton>
+            <div style={{ flex: "1 1 auto" }} />
             <div style={isLeftDock ? { width: 34, height: 1, background: border, margin: "2px 0", flexShrink: 0 } : { width: 1, height: 34, background: border, margin: "0 2px 0 0", flexShrink: 0 }} />
             {user ? (
               <button
@@ -397,6 +360,15 @@ export default function Sidebar() {
               badgeFilter={badgeFilter}
               setBadgeFilter={setBadgeFilter}
               onDeleteBadge={requestDeleteBadge}
+            />
+          )}
+          {panel === "badges" && (
+            <BadgePanel
+              allBadges={allBadges}
+              badgeMode={badgeMode}
+              onSelect={(id) => { setBadgeMode(badgeMode === id ? null : id); }}
+              onUpload={() => customBadgeRef.current?.click()}
+              onDelete={requestDeleteBadge}
             />
           )}
         </div>
@@ -583,6 +555,80 @@ function EraserPanel({ active, onToggle }: { active: boolean; onToggle: () => vo
       <div style={{ fontSize: 12, lineHeight: 1.45, color: "var(--text-muted)" }}>
         Click a pen stroke on the canvas to erase it. Notes, folders, and images stay untouched.
       </div>
+    </div>
+  );
+}
+
+function BadgePanel({ allBadges, badgeMode, onSelect, onUpload, onDelete }: {
+  allBadges: BadgeDef[];
+  badgeMode: string | null;
+  onSelect: (id: string) => void;
+  onUpload: () => void;
+  onDelete: (badge: BadgeDef) => void;
+}) {
+  return (
+    <div>
+      <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-ui)", marginBottom: 8 }}>
+        {badgeMode ? `Placing: ${allBadges.find(b => b.id === badgeMode)?.label ?? "badge"}` : "Click a badge to place it on notes"}
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+        {allBadges.map((badge) => {
+          const active = badgeMode === badge.id;
+          const { Icon } = badge;
+          const isCustom = badge.id.startsWith("custom_");
+          return (
+            <div key={badge.id} style={{ position: "relative" }}>
+              <button
+                onPointerDown={(e) => e.stopPropagation()}
+                onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(badge); }}
+                onClick={() => onSelect(badge.id)}
+                title={isCustom ? `${active ? "Cancel" : "Place"} ${badge.label} — right-click to delete` : `${active ? "Cancel" : "Place"} ${badge.label}`}
+                style={{
+                  width: 44, height: 44, borderRadius: 12, padding: 5, cursor: "pointer",
+                  background: active ? `${badge.color}22` : "transparent",
+                  border: `1.5px solid ${active ? badge.color : "var(--sidebar-border)"}`,
+                  boxShadow: active ? `0 0 0 2px ${badge.color}33` : "none",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}
+              >
+                <Icon size={30} />
+              </button>
+              {isCustom && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onDelete(badge); }}
+                  title={`Delete ${badge.label}`}
+                  style={{
+                    position: "absolute", top: -5, right: -5, width: 17, height: 17,
+                    borderRadius: "50%", border: "1px solid rgba(0,0,0,0.18)",
+                    background: "rgba(20,20,25,0.9)", color: "#fff", fontSize: 9,
+                    cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                  }}
+                >×</button>
+              )}
+            </div>
+          );
+        })}
+        <button
+          onClick={onUpload}
+          title="Upload custom badge"
+          style={{
+            width: 44, height: 44, borderRadius: 12, cursor: "pointer",
+            background: "transparent", border: "1.5px dashed var(--sidebar-border)",
+            color: "var(--text-muted)", display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 22, fontWeight: 300,
+          }}
+        >+</button>
+      </div>
+      {badgeMode && (
+        <button
+          onClick={() => onSelect(badgeMode)}
+          style={{
+            marginTop: 10, width: "100%", height: 32, borderRadius: 8, cursor: "pointer",
+            background: "transparent", border: "1px solid var(--sidebar-border)",
+            color: "var(--text-muted)", fontFamily: "inherit", fontSize: 11, fontWeight: 600,
+          }}
+        >Cancel placement</button>
+      )}
     </div>
   );
 }
@@ -847,6 +893,17 @@ function FolderDockIcon() { return <svg width="19" height="19" viewBox="0 0 19 1
 function ImageDockIcon() { return <svg width="19" height="19" viewBox="0 0 19 19" fill="none"><rect x="3" y="3.5" width="13" height="12" rx="2" stroke="currentColor" strokeWidth="1.7"/><path d="M5.3 13l3.1-3.2 2.2 2.2 1.4-1.5 2.7 2.5" stroke="currentColor" strokeWidth="1.55" strokeLinecap="round" strokeLinejoin="round"/><circle cx="12.8" cy="7" r="1.2" fill="currentColor"/></svg>; }
 function PenDockIcon() { return <svg width="19" height="19" viewBox="0 0 19 19" fill="none"><path d="M13.7 2.8l2.5 2.5-8.7 8.7-3.4.9.9-3.4 8.7-8.7z" stroke="currentColor" strokeWidth="1.55" strokeLinecap="round" strokeLinejoin="round"/><path d="M12.2 4.3l2.5 2.5" stroke="currentColor" strokeWidth="1.55" strokeLinecap="round"/></svg>; }
 function EraserDockIcon() { return <svg width="19" height="19" viewBox="0 0 19 19" fill="none"><path d="M6.4 14.5h7.4" stroke="currentColor" strokeWidth="1.55" strokeLinecap="round"/><path d="M4 10.1l5.5-5.5a1.6 1.6 0 012.3 0l2.4 2.4a1.6 1.6 0 010 2.3l-5.2 5.2H6.1L4 12.4a1.6 1.6 0 010-2.3z" stroke="currentColor" strokeWidth="1.55" strokeLinejoin="round"/><path d="M8.3 5.8l4.1 4.1" stroke="currentColor" strokeWidth="1.55" strokeLinecap="round"/></svg>; }
+function RopeDockIcon() { return <svg width="19" height="19" viewBox="0 0 19 19" fill="none"><path d="M4 5c1 4 3.5 7 11 9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeDasharray="2 2"/><circle cx="4" cy="5" r="2" fill="currentColor" opacity="0.7"/><circle cx="15" cy="14" r="2" fill="currentColor" opacity="0.7"/></svg>; }
+function ArrowConnectIcon() { return <svg width="19" height="19" viewBox="0 0 19 19" fill="none"><rect x="2.5" y="2.5" width="5" height="4" rx="1.2" stroke="currentColor" strokeWidth="1.55"/><rect x="11.5" y="12.5" width="5" height="4" rx="1.2" stroke="currentColor" strokeWidth="1.55"/><path d="M9.5 4.5h2.5a1 1 0 011 1v1.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/><path d="M11 9.5l2-2.5 2 2.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
+function BadgeDockIcon({ active, badgeColor }: { active?: boolean; badgeColor?: string }) {
+  const color = badgeColor ?? "currentColor";
+  return (
+    <svg width="19" height="19" viewBox="0 0 19 19" fill="none">
+      <polygon points="9.5,2 11.6,7.2 17.3,7.2 12.8,10.5 14.9,15.7 9.5,12.5 4.1,15.7 6.2,10.5 1.7,7.2 7.4,7.2" stroke={active ? color : "currentColor"} fill={active ? `${color}33` : "none"} strokeWidth="1.5" strokeLinejoin="round"/>
+    </svg>
+  );
+}
+function DotGridToggleIcon({ active }: { active: boolean }) { return <svg width="19" height="19" viewBox="0 0 19 19" fill="none"><circle cx="5" cy="5" r="1.5" fill="currentColor" opacity={active ? 1 : 0.3}/><circle cx="9.5" cy="5" r="1.5" fill="currentColor" opacity={active ? 0.6 : 0.2}/><circle cx="14" cy="5" r="1.5" fill="currentColor" opacity={active ? 1 : 0.3}/><circle cx="5" cy="9.5" r="1.5" fill="currentColor" opacity={active ? 0.6 : 0.2}/><circle cx="9.5" cy="9.5" r="2.2" fill={active ? "var(--accent)" : "currentColor"} opacity={active ? 1 : 0.3}/><circle cx="14" cy="9.5" r="1.5" fill="currentColor" opacity={active ? 0.6 : 0.2}/><circle cx="5" cy="14" r="1.5" fill="currentColor" opacity={active ? 1 : 0.3}/><circle cx="9.5" cy="14" r="1.5" fill="currentColor" opacity={active ? 0.6 : 0.2}/><circle cx="14" cy="14" r="1.5" fill="currentColor" opacity={active ? 1 : 0.3}/></svg>; }
 function ProfileIcon() { return <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="6.2" r="3.1" stroke="currentColor" strokeWidth="1.7"/><path d="M3.4 15.2c.8-3 2.7-4.5 5.6-4.5s4.8 1.5 5.6 4.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/></svg>; }
 function DockLeftIcon() { return <svg width="19" height="19" viewBox="0 0 19 19" fill="none"><rect x="3" y="3.2" width="13" height="12.6" rx="2.2" stroke="currentColor" strokeWidth="1.55"/><path d="M7.2 3.5v12" stroke="currentColor" strokeWidth="1.55"/><path d="M11.7 7.2L9.4 9.5l2.3 2.3" stroke="currentColor" strokeWidth="1.55" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
 function DockBottomIcon() { return <svg width="19" height="19" viewBox="0 0 19 19" fill="none"><rect x="3" y="3.2" width="13" height="12.6" rx="2.2" stroke="currentColor" strokeWidth="1.55"/><path d="M3.4 11.8h12.2" stroke="currentColor" strokeWidth="1.55"/><path d="M7.2 7.7L9.5 10l2.3-2.3" stroke="currentColor" strokeWidth="1.55" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
@@ -886,30 +943,3 @@ function itemLabel(note: ReturnType<typeof useNotesStore.getState>["notes"][numb
   return note.title || note.body || "Untitled";
 }
 
-async function resizeImageFile(file: File): Promise<{ dataUrl: string; blob: Blob; width: number; height: number }> {
-  const dataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = reject;
-    image.src = dataUrl;
-  });
-  const maxSide = 1600;
-  const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(img.width * scale));
-  canvas.height = Math.max(1, Math.round(img.height * scale));
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Could not resize image");
-  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-  const resizedDataUrl = canvas.toDataURL("image/jpeg", 0.86);
-  const blob = await new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob((value) => value ? resolve(value) : reject(new Error("Could not encode image")), "image/jpeg", 0.86);
-  });
-  return { dataUrl: resizedDataUrl, blob, width: canvas.width, height: canvas.height };
-}

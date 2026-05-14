@@ -4,6 +4,7 @@ import { useRef, useState, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useGesture } from "@use-gesture/react";
 import { useNotesStore, Note as NoteType } from "@/store/notes";
+import { setLivePosition } from "@/lib/livePositions";
 import { useTheme } from "@/hooks/useTheme";
 import { DEFAULT_BADGES } from "@/lib/badges";
 import NoteFullscreen from "./NoteFullscreen";
@@ -55,6 +56,7 @@ export default function Note({ note, gridUnit: G }: Props) {
     setFocusedNoteId, pendingInsert, setPendingInsert,
     highlightedNoteId, setHighlightedNoteId,
     selectedItemIds, toggleSelectedItem, moveItemsByGrid, selectionMode,
+    ropeMode,
   } = useNotesStore();
   const panX = useNotesStore((s) => s.canvas.panX);
   const panY = useNotesStore((s) => s.canvas.panY);
@@ -280,12 +282,28 @@ export default function Note({ note, gridUnit: G }: Props) {
   };
 
   const dragStart = useRef({ pixelX: 0, pixelY: 0 });
+  const dragActive = useRef(false);
   const bindDrag = useGesture(
     {
-      onDragStart: () => { if (note.locked || isEditing) return; bringToFront(note.id); setIsDragging(true); dragStart.current = { pixelX: note.x * G, pixelY: note.y * G }; },
-      onDrag: ({ movement: [mx, my] }) => { if (note.locked || isEditing) return; setDragPos({ x: dragStart.current.pixelX + mx / zoom, y: dragStart.current.pixelY + my / zoom }); },
-      onDragEnd: ({ movement: [mx, my] }) => {
+      onDragStart: () => {
         if (note.locked || isEditing) return;
+        bringToFront(note.id);
+        setIsDragging(true);
+        dragStart.current = { pixelX: note.x * G, pixelY: note.y * G };
+        dragActive.current = true;
+      },
+      onDrag: ({ movement: [mx, my] }) => {
+        if (!dragActive.current || note.locked || isEditing) return;
+        const px = dragStart.current.pixelX + mx / zoom;
+        const py = dragStart.current.pixelY + my / zoom;
+        setDragPos({ x: px, y: py });
+        setLivePosition(note.id, { px, py });
+      },
+      onDragEnd: ({ movement: [mx, my] }) => {
+        if (!dragActive.current) return;
+        dragActive.current = false;
+        setLivePosition(note.id, null);
+        if (note.locked || isEditing) { setDragPos(null); setIsDragging(false); return; }
         const nextX = Math.round((dragStart.current.pixelX + mx / zoom) / G);
         const nextY = Math.round((dragStart.current.pixelY + my / zoom) / G);
         const dx = nextX - note.x;
@@ -352,8 +370,8 @@ export default function Note({ note, gridUnit: G }: Props) {
       return;
     }
     if (badgeMode) { toggleNoteBadge(note.id, badgeMode); setBadgeMode(null); return; }
-    if (e.shiftKey) {
-      if (connectionMode && connectionMode !== note.id) { addConnection(connectionMode, note.id); setConnectionMode(null); }
+    if (ropeMode || e.shiftKey) {
+      if (connectionMode && connectionMode !== note.id) { addConnection(connectionMode, note.id, "#e74c3c", "rope"); setConnectionMode(null); }
       else { setConnectionMode(isConnectionSource ? null : note.id); }
       return;
     }
@@ -392,7 +410,7 @@ export default function Note({ note, gridUnit: G }: Props) {
               {hovered && (note.locked ? <LockClosedIcon /> : <LockOpenIcon />)}
             </Dot>
           </div>
-          <div className="note-drag-handle" style={{ flex: 1, height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }} {...bindDrag()}>
+          <div className="note-drag-handle" style={{ flex: 1, height: "100%", display: "flex", alignItems: "center", justifyContent: "center", touchAction: "none" }} {...bindDrag()}>
             {hovered && !note.locked && !isEditing && (
               <div style={{ display: "flex", gap: 3 }}>{[0,1,2].map(i => <div key={i} style={{ width: 3, height: 3, borderRadius: "50%", background: textColor, opacity: 0.3 }} />)}</div>
             )}
@@ -679,7 +697,7 @@ function VisibleResizeHandle({ note, G, zoom, accent, onPixelUpdate, onGridCommi
     onDragEnd: ({ movement: [mx, my] }) => { const s = start.current; const dx = mx / zoom, dy = my / zoom; const min=4*G; const nw=Math.max(min,s.w-dx),nh=Math.max(min,s.h+dy); onGridCommit({ x: Math.round((s.x+(s.w-nw))/G), y: Math.round(s.y/G), w: Math.max(4,Math.round(nw/G)), h: Math.max(4,Math.round(nh/G)) }); setActive(false); },
   }, { drag: { filterTaps: true } });
   return (
-    <div {...bind()} onMouseEnter={onStayHovered} title="Drag to resize" style={{ position: "absolute", bottom: -36, left: -36, width: 36, height: 36, borderRadius: "50%", cursor: "sw-resize", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 20 }}>
+    <div {...bind()} onMouseEnter={onStayHovered} title="Drag to resize" style={{ position: "absolute", bottom: -36, left: -36, width: 36, height: 36, borderRadius: "50%", cursor: "sw-resize", touchAction: "none", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 20 }}>
       <div style={{ width: 24, height: 24, borderRadius: "50%", background: active ? accent : "rgba(92,107,192,0.8)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: active ? `0 0 0 3px ${accent}44` : "0 2px 6px rgba(0,0,0,0.2)", transition: "background 150ms" }}>
         <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><line x1="2" y1="11" x2="11" y2="2" stroke="#fff" strokeWidth="1.4" strokeLinecap="round"/><polyline points="2,7 2,11 6,11" stroke="#fff" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/><polyline points="11,6 11,2 7,2" stroke="#fff" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg>
       </div>
@@ -700,7 +718,7 @@ function RotationHandle({ note, G, panX, panY, zoom, accent, onRotate, onStayHov
     onDragEnd: () => setActive(false),
   }, { drag: { filterTaps: true } });
   return (
-    <div {...bind()} onMouseEnter={onStayHovered} onClick={(e) => { e.stopPropagation(); onRotate(0); setDisplay(0); }} title={`${display.toFixed(1)}° — drag to rotate · click to reset`} style={{ position: "absolute", bottom: -36, right: -36, width: 36, height: 36, borderRadius: "50%", cursor: active ? "grabbing" : "grab", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 20 }}>
+    <div {...bind()} onMouseEnter={onStayHovered} onClick={(e) => { e.stopPropagation(); onRotate(0); setDisplay(0); }} title={`${display.toFixed(1)}° — drag to rotate · click to reset`} style={{ position: "absolute", bottom: -36, right: -36, width: 36, height: 36, borderRadius: "50%", cursor: active ? "grabbing" : "grab", touchAction: "none", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 20 }}>
       <div style={{ width: 24, height: 24, borderRadius: "50%", background: active ? accent : "rgba(92,107,192,0.8)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: active ? `0 0 0 3px ${accent}44` : "0 2px 6px rgba(0,0,0,0.2)", transition: "background 150ms" }}>
         <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M10.5 6.5A4 4 0 012.5 6.5" stroke="#fff" strokeWidth="1.5" strokeLinecap="round"/><polyline points="10.5,4 10.5,6.5 8,6.5" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
       </div>

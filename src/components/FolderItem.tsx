@@ -36,6 +36,7 @@ export default function FolderItem({ folder, items, gridUnit: G }: Props) {
   const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
   const [hovered, setHovered] = useState(false);
   const dragStart = useRef({ pixelX: 0, pixelY: 0 });
+  const dragActive = useRef(false);
 
   const selected = selectedItemIds.includes(folder.id);
   const highlighted = highlightedNoteId === folder.id;
@@ -50,15 +51,16 @@ export default function FolderItem({ folder, items, gridUnit: G }: Props) {
     onDragStart: () => {
       bringToFront(folder.id);
       dragStart.current = { pixelX: folder.x * G, pixelY: folder.y * G };
+      dragActive.current = true;
     },
     onDrag: ({ movement: [mx, my] }) => {
+      if (!dragActive.current) return;
       setDragPos({ x: dragStart.current.pixelX + mx / zoom, y: dragStart.current.pixelY + my / zoom });
     },
     onDragEnd: ({ movement: [mx, my] }) => {
-      if (Math.abs(mx) < 6 && Math.abs(my) < 6) {
-        setDragPos(null);
-        return;
-      }
+      if (!dragActive.current) return;
+      dragActive.current = false;
+      if (Math.abs(mx) < 6 && Math.abs(my) < 6) { setDragPos(null); return; }
       const nextX = Math.round((dragStart.current.pixelX + mx / zoom) / G);
       const nextY = Math.round((dragStart.current.pixelY + my / zoom) / G);
       const dx = nextX - folder.x;

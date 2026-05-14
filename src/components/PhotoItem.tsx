@@ -35,6 +35,10 @@ export default function PhotoItem({ photo, gridUnit: G }: Props) {
     moveItemsByGrid,
     highlightedNoteId,
     selectionMode,
+    connectionMode,
+    setConnectionMode,
+    addConnection,
+    ropeMode,
   } = useNotesStore();
   const panX = useNotesStore((s) => s.canvas.panX);
   const panY = useNotesStore((s) => s.canvas.panY);
@@ -49,6 +53,8 @@ export default function PhotoItem({ photo, gridUnit: G }: Props) {
   const [hovered, setHovered] = useState(false);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const dragStart = useRef({ pixelX: 0, pixelY: 0 });
+  const dragActive = useRef(false);
+  const isConnectionSource = connectionMode === photo.id;
 
   const selected = selectedItemIds.includes(photo.id);
   const highlighted = highlightedNoteId === photo.id;
@@ -76,17 +82,17 @@ export default function PhotoItem({ photo, gridUnit: G }: Props) {
       if (photo.locked) return;
       bringToFront(photo.id);
       dragStart.current = { pixelX: photo.x * G, pixelY: photo.y * G };
+      dragActive.current = true;
     },
     onDrag: ({ movement: [mx, my] }) => {
-      if (photo.locked) return;
+      if (!dragActive.current || photo.locked) return;
       setDragPos({ x: dragStart.current.pixelX + mx / zoom, y: dragStart.current.pixelY + my / zoom });
     },
     onDragEnd: ({ movement: [mx, my] }) => {
-      if (photo.locked) return;
-      if (Math.abs(mx) < 6 && Math.abs(my) < 6) {
-        setDragPos(null);
-        return;
-      }
+      if (!dragActive.current) return;
+      dragActive.current = false;
+      if (photo.locked) { setDragPos(null); return; }
+      if (Math.abs(mx) < 6 && Math.abs(my) < 6) { setDragPos(null); return; }
       const nextX = Math.round((dragStart.current.pixelX + mx / zoom) / G);
       const nextY = Math.round((dragStart.current.pixelY + my / zoom) / G);
       const dx = nextX - photo.x;
@@ -114,6 +120,17 @@ export default function PhotoItem({ photo, gridUnit: G }: Props) {
       e.stopPropagation();
       toggleNoteBadge(photo.id, badgeMode);
       setBadgeMode(null);
+      return;
+    }
+    if (ropeMode || e.shiftKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (connectionMode && connectionMode !== photo.id) {
+        addConnection(connectionMode, photo.id, "#e74c3c", "rope");
+        setConnectionMode(null);
+      } else {
+        setConnectionMode(isConnectionSource ? null : photo.id);
+      }
       return;
     }
     bringToFront(photo.id);
