@@ -42,6 +42,52 @@ export { DEFAULT_BADGES } from "@/lib/badges";
 
 export type AnchorSide = "top" | "bottom" | "left" | "right";
 
+export interface DemoNoteSeed {
+  title: string;
+  body: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  color: NoteColor;
+  rotation?: number;
+}
+
+export interface DemoPhotoSeed {
+  url: string;
+  caption: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  rotation?: number;
+}
+
+export interface DemoStrokeSeed {
+  points: StrokePoint[];
+  color: string;
+  width?: number;
+}
+
+export interface DemoConnectionSeed {
+  sourceType: "note" | "photo";
+  sourceIdx: number;
+  targetType: "note" | "photo";
+  targetIdx: number;
+  connectionType: "rope" | "arrow";
+  sourceAnchor?: AnchorSide;
+  targetAnchor?: AnchorSide;
+  color?: string;
+}
+
+export interface FullDemoSpec {
+  notes: DemoNoteSeed[];
+  photos?: DemoPhotoSeed[];
+  strokes?: DemoStrokeSeed[];
+  connections?: DemoConnectionSeed[];
+  initialCanvas?: { panX: number; panY: number; zoom: number };
+}
+
 export interface Connection {
   id: string;
   sourceId: string;
@@ -113,6 +159,7 @@ interface NotesStore {
   arrowSourceId: string | null;
   arrowSourceAnchor: AnchorSide | null;
   ropeMode: boolean;
+  syncReady: boolean;
 
   addNote: () => void;
   addNoteWithContent: (content: { title?: string; body?: string }) => void;
@@ -146,6 +193,9 @@ interface NotesStore {
   setArrowMode: (active: boolean) => void;
   setArrowSource: (noteId: string | null, anchor?: AnchorSide) => void;
   setRopeMode: (active: boolean) => void;
+  setSyncReady: (v: boolean) => void;
+  seedDemoContent: (seeds: DemoNoteSeed[]) => void;
+  seedFullDemo: (spec: FullDemoSpec) => void;
   openFolder: (id: string) => void;
   goToParentFolder: () => void;
   setActiveFolderId: (id: CanvasParentId) => void;
@@ -394,6 +444,7 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
   arrowSourceId: null,
   arrowSourceAnchor: null,
   ropeMode: false,
+  syncReady: false,
   focusedNoteId: null,
   pendingInsert: null,
   badgeFilter: null,
@@ -635,6 +686,111 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
   setDotGridEffect: (v) => set({ dotGridEffect: v }),
   setArrowMode: (active) => set({ arrowMode: active, arrowSourceId: null, arrowSourceAnchor: null, drawingMode: active ? false : get().drawingMode, eraserMode: active ? false : get().eraserMode, ropeMode: active ? false : get().ropeMode, badgeMode: active ? null : get().badgeMode, connectionMode: active ? null : get().connectionMode }),
   setRopeMode: (active) => set({ ropeMode: active, connectionMode: active ? null : get().connectionMode, drawingMode: active ? false : get().drawingMode, eraserMode: active ? false : get().eraserMode, arrowMode: active ? false : get().arrowMode, badgeMode: active ? null : get().badgeMode }),
+  setSyncReady: (v) => set({ syncReady: v }),
+  seedFullDemo: (spec) => {
+    const state = get();
+    let nextZ = state.topZ;
+    const now = new Date().toISOString();
+
+    // Create notes with captured IDs
+    const noteIds: string[] = [];
+    const demoNotes = spec.notes.map((seed) => {
+      const id = createItemId();
+      noteIds.push(id);
+      nextZ += 1;
+      return normalizeItem({
+        id, type: "note", parentId: null,
+        x: seed.x, y: seed.y, w: seed.w, h: seed.h,
+        color: seed.color, rotation: seed.rotation ?? 0,
+        title: seed.title, body: seed.body,
+        locked: false, zIndex: nextZ, badges: [], createdAt: now,
+      });
+    });
+
+    // Create photos with captured IDs
+    const photoIds: string[] = [];
+    const demoPhotos = (spec.photos ?? []).map((seed) => {
+      const id = createItemId();
+      photoIds.push(id);
+      nextZ += 1;
+      return normalizeItem({
+        id, type: "photo", parentId: null,
+        x: seed.x, y: seed.y, w: seed.w, h: seed.h,
+        color: "yellow", rotation: seed.rotation ?? 0,
+        title: "", body: seed.caption, caption: seed.caption,
+        imageUrl: seed.url, imagePath: null,
+        locked: false, zIndex: nextZ, badges: [], createdAt: now,
+      });
+    });
+
+    // Create strokes
+    const demoStrokes = (spec.strokes ?? []).map((seed) => {
+      if (seed.points.length < 2) return null;
+      const minX = Math.min(...seed.points.map((p) => p.x));
+      const minY = Math.min(...seed.points.map((p) => p.y));
+      const maxX = Math.max(...seed.points.map((p) => p.x));
+      const maxY = Math.max(...seed.points.map((p) => p.y));
+      nextZ += 1;
+      return normalizeItem({
+        id: createItemId(), type: "stroke", parentId: null,
+        x: Math.floor(minX / GRID), y: Math.floor(minY / GRID),
+        w: Math.max(1, Math.ceil((maxX - minX) / GRID)),
+        h: Math.max(1, Math.ceil((maxY - minY) / GRID)),
+        color: "lavender", rotation: 0, title: "", body: "",
+        locked: false, zIndex: nextZ, badges: [], createdAt: now,
+        strokePoints: seed.points, strokeColor: seed.color, strokeWidth: seed.width ?? 4,
+      });
+    }).filter(Boolean) as Note[];
+
+    // Build connections using captured IDs
+    const demoConnections = (spec.connections ?? []).map((conn): Connection => {
+      const sourceId = conn.sourceType === "note" ? noteIds[conn.sourceIdx] : photoIds[conn.sourceIdx];
+      const targetId = conn.targetType === "note" ? noteIds[conn.targetIdx] : photoIds[conn.targetIdx];
+      return {
+        id: createItemId(),
+        sourceId, targetId,
+        color: conn.color ?? "#e74c3c",
+        connectionType: conn.connectionType,
+        sourceAnchor: conn.sourceAnchor,
+        targetAnchor: conn.targetAnchor,
+      };
+    });
+
+    const allNotes = [...state.notes, ...demoNotes, ...demoPhotos, ...demoStrokes];
+    const allConnections = [...state.connections, ...demoConnections];
+    const nextCanvas = spec.initialCanvas ?? state.canvas;
+    const folderKey = state.activeFolderId ?? "root";
+
+    set({
+      notes: allNotes,
+      connections: allConnections,
+      topZ: nextZ,
+      canvas: nextCanvas,
+      folderPan: { ...state.folderPan, [folderKey]: nextCanvas },
+    });
+  },
+  seedDemoContent: (seeds) => {
+    const state = get();
+    let nextZ = state.topZ;
+    const demoNotes = seeds.map((seed) => {
+      nextZ += 1;
+      return normalizeItem({
+        id: createItemId(),
+        type: "note",
+        parentId: null,
+        x: seed.x, y: seed.y, w: seed.w, h: seed.h,
+        color: seed.color,
+        rotation: seed.rotation ?? 0,
+        title: seed.title,
+        body: seed.body,
+        locked: false,
+        zIndex: nextZ,
+        badges: [],
+        createdAt: new Date().toISOString(),
+      });
+    });
+    set({ notes: [...state.notes, ...demoNotes], topZ: nextZ });
+  },
   setArrowSource: (noteId, anchor) => set({ arrowSourceId: noteId ?? null, arrowSourceAnchor: anchor ?? null }),
 
   openFolder: (id) =>

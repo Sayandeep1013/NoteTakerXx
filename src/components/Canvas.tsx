@@ -16,6 +16,7 @@ import { useTheme } from "@/hooks/useTheme";
 import { useAuth } from "@/hooks/useAuth";
 import { usePhotoAdd } from "@/hooks/usePhotoAdd";
 import { NOTE_COLOR_KEYS, type NoteColor } from "@/lib/colors";
+import type { FullDemoSpec } from "@/store/notes";
 import upiQr from "../../images/upi qr.jpeg";
 
 const SHOW_COFFEE_BUTTON = true;
@@ -56,11 +57,13 @@ export default function Canvas() {
     selectedItemIds, clearSelection, moveItemsToFolder, setSelectionMode,
     drawingMode, eraserMode, strokeColor, setDrawingMode, setEraserMode,
     arrowMode, setArrowMode, ropeMode, setRopeMode,
+    syncReady, seedFullDemo,
   } = useNotesStore();
   const { user } = useAuth();
   const { handlePhotoUpload } = usePhotoAdd(user);
   const photoInputRef = useRef<HTMLInputElement>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
+  const demoSeeded = useRef(false);
   const panState = useRef({ active: false, startX: 0, startY: 0, panX: 0, panY: 0 });
   const panRef = useRef({ x: canvas.panX, y: canvas.panY, zoom: canvas.zoom || 1 });
   panRef.current = { x: canvas.panX, y: canvas.panY, zoom: canvas.zoom || 1 };
@@ -256,6 +259,18 @@ export default function Canvas() {
     return () => document.removeEventListener("paste", onPaste);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handlePhotoUpload, addNoteWithContent]);
+
+  // Seed demo content on first ever visit (once syncReady, canvas is empty, flag not set)
+  useEffect(() => {
+    if (!syncReady || demoSeeded.current) return;
+    if (activeFolderId) return; // only on root canvas
+    demoSeeded.current = true;
+    const alreadyShown = typeof localStorage !== "undefined" && localStorage.getItem("nxtaker_demo_shown");
+    if (alreadyShown || notes.length > 0) return;
+    localStorage.setItem("nxtaker_demo_shown", "1");
+    seedFullDemo(DEMO_SPEC);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncReady]);
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     // Only activate pan on the backdrop (canvas-pan-layer), not on notes
@@ -544,7 +559,16 @@ export default function Canvas() {
       <Sidebar />
       <UniversalSearch />
       <ResourceMonitor />
-      {notes.length === 0 && !activeFolderId && <FirstRunGuide onAddNote={addNote} />}
+
+      {/* Subtle loader while notes are being fetched — prevents FirstRunGuide flash */}
+      {!syncReady && <CanvasLoader />}
+
+      {/* Empty-canvas guide — only after sync is done and demo is not being seeded */}
+      {syncReady && notes.length === 0 && !activeFolderId && (
+        typeof localStorage !== "undefined" && localStorage.getItem("nxtaker_demo_shown")
+          ? <FirstRunGuide onAddNote={addNote} />
+          : null
+      )}
     </div>
   );
 }
@@ -770,6 +794,133 @@ function ModeBanner({ children, onClick, color, shadow }: {
       }}
     >
       {children}
+    </div>
+  );
+}
+
+// ── Full demo spec seeded on first visit ──────────────────────────────────
+// Grid unit = 80px. Stroke coords are world pixel coords.
+// Connections use indices into the notes/photos arrays.
+
+const DEMO_SPEC: FullDemoSpec = {
+  // 2 notes
+  notes: [
+    {
+      title: "Welcome to NoteTakerXX",
+      body: "Your infinite canvas for ideas.\n\n- Drag the dots at the top of a note to move it\n- Double-click to edit\n- Ctrl+V to paste text or images\n- Right-click for more options",
+      x: 0, y: 0, w: 5, h: 4, color: "yellow", rotation: -1.5,
+    },
+    {
+      title: "Connect & Draw",
+      body: "- Rope mode: strings notes together\n- Arrow mode: directed connections\n- Pen tool: sketch freehand\n- Eraser: removes strokes only",
+      x: 6, y: 1, w: 4, h: 4, color: "mint", rotation: 1,
+    },
+  ],
+
+  // The Berserk image from public/images
+  photos: [
+    {
+      url: "/images/guts-5k-berserk-5120x2880-13631.jpg",
+      caption: "Berserk",
+      x: 11, y: 0, w: 6, h: 4, rotation: 0.5,
+    },
+  ],
+
+  // Pen strokes (world pixel coords)
+  strokes: [
+    {
+      // Wavy underline below Note 1 (note bottom edge at y=320)
+      color: "#e58aa9",
+      width: 3,
+      points: [
+        { x: 30,  y: 345 }, { x: 60,  y: 338 }, { x: 90,  y: 348 },
+        { x: 120, y: 338 }, { x: 150, y: 348 }, { x: 180, y: 338 },
+        { x: 210, y: 348 }, { x: 240, y: 338 }, { x: 270, y: 348 },
+        { x: 300, y: 338 }, { x: 330, y: 348 }, { x: 360, y: 340 },
+      ],
+    },
+    {
+      // Short squiggle below Note 2 (note bottom edge at y=400)
+      color: "#7c8fd8",
+      width: 3,
+      points: [
+        { x: 490, y: 428 }, { x: 525, y: 420 }, { x: 560, y: 432 },
+        { x: 595, y: 420 }, { x: 630, y: 432 }, { x: 665, y: 422 },
+        { x: 700, y: 430 }, { x: 735, y: 420 }, { x: 770, y: 428 },
+      ],
+    },
+  ],
+
+  // 1 rope + 1 arrow connection
+  connections: [
+    {
+      // Rope: Note 0 → Note 1
+      sourceType: "note", sourceIdx: 0,
+      targetType: "note", targetIdx: 1,
+      connectionType: "rope",
+      color: "#e74c3c",
+    },
+    {
+      // Arrow: Note 1 right edge → Photo left edge
+      sourceType: "note", sourceIdx: 1,
+      targetType: "photo", targetIdx: 0,
+      connectionType: "arrow",
+      sourceAnchor: "right",
+      targetAnchor: "left",
+      color: "var(--accent)",
+    },
+  ],
+
+  // Zoom out slightly so everything fits in the initial viewport
+  initialCanvas: { panX: 80, panY: 100, zoom: 0.75 },
+};
+
+// ── Subtle canvas loader ────────────────────────────────────────────────────
+
+function CanvasLoader() {
+  return (
+    <div
+      style={{
+        position: "fixed",
+        bottom: 18,
+        left: "50%",
+        transform: "translateX(-50%)",
+        zIndex: 480,
+        display: "flex",
+        alignItems: "center",
+        gap: 7,
+        padding: "6px 14px",
+        borderRadius: 999,
+        background: "var(--bg-sidebar)",
+        border: "1px solid var(--sidebar-border)",
+        boxShadow: "0 4px 16px rgba(0,0,0,0.14)",
+        pointerEvents: "none",
+      }}
+    >
+      <span style={{
+        width: 7, height: 7, borderRadius: "50%",
+        background: "var(--accent)",
+        display: "inline-block",
+        animation: "loaderPulse 1.1s ease-in-out infinite",
+      }} />
+      <span style={{
+        width: 7, height: 7, borderRadius: "50%",
+        background: "var(--accent)",
+        display: "inline-block",
+        animation: "loaderPulse 1.1s ease-in-out infinite 0.22s",
+      }} />
+      <span style={{
+        width: 7, height: 7, borderRadius: "50%",
+        background: "var(--accent)",
+        display: "inline-block",
+        animation: "loaderPulse 1.1s ease-in-out infinite 0.44s",
+      }} />
+      <style>{`
+        @keyframes loaderPulse {
+          0%, 80%, 100% { opacity: 0.22; transform: scale(0.85); }
+          40%            { opacity: 1;    transform: scale(1); }
+        }
+      `}</style>
     </div>
   );
 }

@@ -73,23 +73,6 @@ export default function DotGrid() {
       const [br, bg, bb, ba] = theme.base;
       const [hr, hg, hb, ha] = theme.hot;
 
-      // When effect is off, draw all dots in one batch with a single fillStyle
-      if (!effect) {
-        ctx.beginPath();
-        ctx.fillStyle = `rgba(${br},${bg},${bb},${ba.toFixed(2)})`;
-        for (let col = startCol; col <= endCol; col++) {
-          for (let row = startRow; row <= endRow; row++) {
-            const x = col * spacing + px;
-            const y = row * spacing + py;
-            ctx.moveTo(x + baseRadius, y);
-            ctx.arc(x, y, baseRadius, 0, Math.PI * 2);
-          }
-        }
-        ctx.fill();
-        rafId = requestAnimationFrame(draw);
-        return;
-      }
-
       for (let col = startCol; col <= endCol; col++) {
         for (let row = startRow; row <= endRow; row++) {
           const restX = col * spacing + px;
@@ -105,21 +88,24 @@ export default function DotGrid() {
           let r = br, g = bg, b = bb, a = ba;
 
           if (dist < BALL_RADIUS && dist > 0) {
-            const t      = 1 - dist / BALL_RADIUS;
-            const liftT  = t * t;
-            const pushT  = 4 * t * (1 - t);
+            const t     = 1 - dist / BALL_RADIUS;
+            const liftT = t * t;                  // drives glow (size + color)
 
-            const pushMag = PUSH_STRENGTH * pushT;
-            const angle   = Math.atan2(ddy, ddx);
-            finalX = restX + Math.cos(angle) * pushMag;
-            finalY = restY + Math.sin(angle) * pushMag;
-
+            // Glow: always applied (dot grows and shifts colour near cursor)
             radius = lerp(baseRadius, peakRadius, liftT);
-
             r = Math.round(lerp(br, hr, liftT));
             g = Math.round(lerp(bg, hg, liftT));
             b = Math.round(lerp(bb, hb, liftT));
             a = lerp(ba, ha, liftT);
+
+            // Ball displacement: only when the ball effect is toggled on
+            if (effect) {
+              const pushT   = 4 * t * (1 - t);   // peaks at equator, 0 at center/edge
+              const pushMag = PUSH_STRENGTH * pushT;
+              const angle   = Math.atan2(ddy, ddx);
+              finalX = restX + Math.cos(angle) * pushMag;
+              finalY = restY + Math.sin(angle) * pushMag;
+            }
           }
 
           ctx.beginPath();

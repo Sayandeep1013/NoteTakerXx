@@ -276,6 +276,11 @@ export function useNoteSync(user: User | null, authLoading = false) {
   const [syncReady, setSyncReady]             = useState(false);
   const supabase = createClient();
 
+  // Lift syncReady into the global store so Canvas can gate rendering on it
+  useEffect(() => {
+    if (syncReady) useNotesStore.setState({ syncReady: true });
+  }, [syncReady]);
+
   const prevNotes  = useRef<Note[]>([]);
   const timers     = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const repairTimers = useRef<number[]>([]);

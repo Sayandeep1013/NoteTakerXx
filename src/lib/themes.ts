@@ -1,6 +1,7 @@
 import type { NoteColor } from "./colors";
 
-export type ThemeName = "paper" | "cork" | "slate" | "midnight" | "forest" | "dusk";
+export type ThemeName = "paper" | "cork" | "slate" | "midnight" | "forest" | "mono";
+export const VALID_THEME_NAMES: ThemeName[] = ["paper", "cork", "slate", "midnight", "forest", "mono"];
 
 export interface ThemeConfig {
   name: ThemeName;
@@ -145,30 +146,30 @@ export const THEMES: Record<ThemeName, ThemeConfig> = {
     dotBase: [95, 150, 72, 0.36], dotHot: [220, 180, 55, 0.92],
   },
 
-  // Dusk: warm plum/aubergine — sunset analogous (golds, roses, corals)
-  dusk: {
-    name: "dusk", label: "Dusk", swatch: "#281535", isDark: true,
-    canvasBg: "#241230",
-    sidebarBg: "#24182a",
-    sidebarBorder: "#c89828",
-    textUi: "#e8d0f4", textMuted: "rgba(232,208,244,0.40)",
-    accent: "#3888c0", btnHover: "rgba(56,136,192,0.14)",
-    folderLabelBg: "#c89828",
-    folderLabelText: "#241230",
-    folderLabelBorder: "#3888c0",
+  // Mono: pure black canvas — editorial high-contrast; white/gray notes on black
+  mono: {
+    name: "mono", label: "Monochrome", swatch: "#000000", isDark: true,
+    canvasBg: "#000000",
+    sidebarBg: "#0c0c0c",
+    sidebarBorder: "#2e2e2e",
+    textUi: "#e8e8e8", textMuted: "rgba(232,232,232,0.38)",
+    accent: "#d4d4d4", btnHover: "rgba(212,212,212,0.10)",
+    folderLabelBg: "#1c1c1c",
+    folderLabelText: "#e8e8e8",
+    folderLabelBorder: "#404040",
     noteColors: {
-      yellow:   "#c89828",  // warm amber — analogous warm
-      pink:     "#c84870",  // warm rose
-      mint:     "#208878",  // teal — split complement
-      lavender: "#8848c8",  // violet — same warm-dark family
-      peach:    "#c86040",  // coral
-      sky:      "#3888c0",  // cool blue — complement
-      lilac:    "#b04898",  // magenta rose
-      sage:     "#388868",  // seafoam
+      yellow:   "#ffffff",  // pure white
+      pink:     "#f2f2f2",  // very light
+      mint:     "#e6e6e6",  // light gray
+      lavender: "#dbdbdb",  // medium-light gray
+      peach:    "#f8f8f8",  // near white
+      sky:      "#ececec",  // cool very light gray
+      lilac:    "#e2e2e2",  // slightly deeper
+      sage:     "#f0f0f0",  // clean off-white
     },
-    noteText: "#f4e8f8", notePlaceholder: "rgba(244,232,248,0.28)",
-    dotBase: [165, 92, 205, 0.34], dotHot: [255, 120, 210, 0.94],
+    noteText: "#080808", notePlaceholder: "rgba(8,8,8,0.28)",
+    dotBase: [255, 255, 255, 0.10], dotHot: [255, 255, 255, 0.82],
   },
 };
 
-export const DEFAULT_THEME: ThemeName = "slate";
+export const DEFAULT_THEME: ThemeName = "paper";

@@ -457,7 +457,7 @@ export default function Sidebar() {
 }
 
 function ThemePanel({ current, onChange }: { current: ThemeName; onChange: (t: ThemeName) => void }) {
-  const order: ThemeName[] = ["paper", "cork", "slate", "midnight", "forest", "dusk"];
+  const order: ThemeName[] = ["paper", "cork", "slate", "midnight", "forest", "mono"];
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 7 }}>
       {order.map((name) => {
