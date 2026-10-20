@@ -1,201 +1,88 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { useGesture } from "@use-gesture/react";
-import { Note as CanvasItem, useNotesStore } from "@/store/notes";
-import { useTheme } from "@/hooks/useTheme";
-import DeleteConfirm from "./DeleteConfirm";
+import { memo, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
+import { useNotesStore, type Note as CanvasItem } from "@/store/notes";
+import { NOTE_COLOR_KEYS, noteColorVar } from "@/lib/colors";
+import { handleItemModePointer } from "@/lib/items";
+import { GRID } from "@/lib/constants";
+import { useItemDrag } from "@/hooks/useItemDrag";
 import NoteContextMenu from "./NoteContextMenu";
+import { ConfirmDialog } from "./ui/Modal";
 
-interface Props {
-  folder: CanvasItem;
-  items: CanvasItem[];
-  gridUnit: number;
-}
+function FolderItem({ folder }: { folder: CanvasItem }) {
+  const selected = useNotesStore((s) => s.selectedItemIds.includes(folder.id));
+  const highlighted = useNotesStore((s) => s.highlightedNoteId === folder.id);
+  // [count, ...first four children] — shallow-compared, so unrelated edits don't re-render.
+  const [count, ...preview] = useNotesStore(useShallow((s) => {
+    const kids: (number | CanvasItem)[] = [0];
+    for (const n of s.notes) {
+      if (n.parentId !== folder.id || n.type === "stroke") continue;
+      kids[0] = (kids[0] as number) + 1;
+      if (kids.length < 5) kids.push(n);
+    }
+    return kids;
+  })) as [number, ...CanvasItem[]];
 
-export default function FolderItem({ folder, items, gridUnit: G }: Props) {
-  const theme = useTheme();
-  const {
-    updateNote,
-    openFolder,
-    bringToFront,
-    selectedItemIds,
-    toggleSelectedItem,
-    moveItemsByGrid,
-    highlightedNoteId,
-    selectionMode,
-  } = useNotesStore();
-  const zoom = useNotesStore((s) => s.canvas.zoom || 1);
-  const children = useMemo(() => items.filter((item) => item.parentId === folder.id), [folder.id, items]);
-  const preview = children.slice(0, 4);
-  const [editing, setEditing] = useState(false);
-  const [title, setTitle] = useState(folder.folderName ?? folder.title ?? "Untitled Folder");
-  const [showDelete, setShowDelete] = useState(false);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
-  const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
-  const [hovered, setHovered] = useState(false);
-  const dragStart = useRef({ pixelX: 0, pixelY: 0 });
-  const dragActive = useRef(false);
-
-  const selected = selectedItemIds.includes(folder.id);
-  const highlighted = highlightedNoteId === folder.id;
-  const visualX = dragPos?.x ?? folder.x * G;
-  const visualY = dragPos?.y ?? folder.y * G;
-  const size = Math.max(76, folder.w * G);
-  const labelBg = theme.folderLabelBg;
-  const labelText = theme.folderLabelText;
-  const labelBorder = theme.folderLabelBorder;
-
-  const bindDrag = useGesture({
-    onDragStart: () => {
-      bringToFront(folder.id);
-      dragStart.current = { pixelX: folder.x * G, pixelY: folder.y * G };
-      dragActive.current = true;
-    },
-    onDrag: ({ movement: [mx, my] }) => {
-      if (!dragActive.current) return;
-      setDragPos({ x: dragStart.current.pixelX + mx / zoom, y: dragStart.current.pixelY + my / zoom });
-    },
-    onDragEnd: ({ movement: [mx, my] }) => {
-      if (!dragActive.current) return;
-      dragActive.current = false;
-      if (Math.abs(mx) < 6 && Math.abs(my) < 6) { setDragPos(null); return; }
-      const nextX = Math.round((dragStart.current.pixelX + mx / zoom) / G);
-      const nextY = Math.round((dragStart.current.pixelY + my / zoom) / G);
-      const dx = nextX - folder.x;
-      const dy = nextY - folder.y;
-      if (selected && selectedItemIds.length > 1) moveItemsByGrid(selectedItemIds, dx, dy);
-      else updateNote(folder.id, { x: nextX, y: nextY });
-      setDragPos(null);
-    },
-  }, { drag: { filterTaps: true, threshold: 6 } });
+  const name = folder.folderName ?? folder.title ?? "Untitled Folder";
+  const [title, setTitle] = useState<string | null>(null); // non-null while renaming
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const { bind, dragPos, dragging } = useItemDrag(folder, { threshold: 6 });
 
   const commitTitle = () => {
+    if (title === null) return;
     const next = title.trim() || "Untitled Folder";
-    setTitle(next);
-    updateNote(folder.id, { title: next, folderName: next });
-    setEditing(false);
+    if (next !== name) useNotesStore.getState().updateNote(folder.id, { title: next, folderName: next });
+    setTitle(null);
   };
 
-  const handlePointerDownCapture = (e: React.PointerEvent) => {
-    if (selectionMode === "import" || e.ctrlKey || e.metaKey) {
-      e.preventDefault();
-      e.stopPropagation();
-      toggleSelectedItem(folder.id);
-      return;
-    }
-    bringToFront(folder.id);
-  };
+  const size = Math.max(76, folder.w * GRID);
 
   return (
     <>
       <div
-        onPointerDownCapture={handlePointerDownCapture}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        onDoubleClick={(e) => {
-          e.stopPropagation();
-          if (!editing) openFolder(folder.id);
+        data-item={folder.id}
+        data-selected={selected}
+        data-highlighted={highlighted}
+        data-dragging={dragging}
+        tabIndex={-1}
+        className="item folder"
+        onPointerDownCapture={(e) => {
+          if (handleItemModePointer(folder.id, e, { connectable: false })) { e.preventDefault(); e.stopPropagation(); }
         }}
-        onContextMenu={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          setContextMenu({ x: e.clientX, y: e.clientY });
-        }}
-        style={{
-          position: "absolute",
-          left: visualX,
-          top: visualY,
-          width: size,
-          minHeight: size + 30,
-          zIndex: folder.zIndex,
-          pointerEvents: "auto",
-          cursor: "default",
-          outline: selected || highlighted ? "2.5px dashed var(--accent)" : undefined,
-          outlineOffset: selected || highlighted ? 6 : undefined,
-          borderRadius: 16,
-          color: "var(--text-ui)",
-          animation: "folderPop 180ms cubic-bezier(0.2,1.2,0.35,1)",
-        }}
+        onPointerDown={() => useNotesStore.getState().bringToFront(folder.id)}
+        onDoubleClick={() => { if (title === null) useNotesStore.getState().openFolder(folder.id); }}
+        onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY }); }}
+        style={{ left: dragPos?.x ?? folder.x * GRID, top: dragPos?.y ?? folder.y * GRID, width: size, zIndex: folder.zIndex }}
       >
-        <div
-          title="Open folder"
-          style={{ position: "relative", width: size, height: size }}
-        >
-          <div
-            {...bindDrag()}
-            title="Drag folder"
-            onDoubleClick={(e) => e.stopPropagation()}
-            style={{
-              position: "absolute",
-              top: -12,
-              left: "50%",
-              transform: "translateX(-50%)",
-              width: Math.min(54, size * 0.72),
-              height: 24,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              cursor: "grab",
-              touchAction: "none",
-              zIndex: 8,
-            }}
-          >
-            {hovered && (
-              <span style={{ display: "flex", gap: 4, opacity: 0.46, pointerEvents: "none" }}>
-                {[0, 1, 2].map((dot) => (
-                  <span key={dot} style={{ width: 4, height: 4, borderRadius: "50%", background: "var(--text-ui)", display: "block" }} />
-                ))}
-              </span>
-            )}
-          </div>
+        <div {...bind()} className="drag-handle" title="Drag to move, double-click to open" style={{ position: "relative", width: size, height: size }}>
           {[3, 2, 1, 0].map((layer) => {
             const item = preview[layer];
-            const colors = Object.values(theme.noteColors);
-            const bg = item?.type === "photo" ? "#fff" : item ? theme.noteColors[item.color] : colors[layer % colors.length];
+            const isPhoto = item?.type === "photo";
             return (
               <div
                 key={layer}
+                className="folder-sheet"
                 style={{
-                  position: "absolute",
                   inset: 11 - layer * 3,
-                  borderRadius: 10,
-                  background: bg,
+                  background: isPhoto ? "#fff" : noteColorVar(item?.color ?? NOTE_COLOR_KEYS[layer]),
+                  border: isPhoto ? "4px solid #fff" : undefined,
                   transform: `rotate(${(layer - 1.5) * 4}deg) translate(${layer * 2}px, ${-layer}px)`,
-                  boxShadow: "0 5px 14px rgba(0,0,0,0.20)",
-                  border: item?.type === "photo" ? "5px solid #fff" : "1px solid rgba(0,0,0,0.08)",
-                  overflow: "hidden",
                 }}
               >
-                {item?.type === "photo" && item.imageUrl && (
-                  <img src={item.imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                )}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                {isPhoto && item.imageUrl && <img src={item.imageUrl} alt="" draggable={false} loading="lazy" decoding="async" />}
               </div>
             );
           })}
-          <div style={{
-            position: "absolute",
-            right: 1,
-            bottom: 2,
-            minWidth: 23,
-            height: 23,
-            padding: "0 7px",
-            borderRadius: 999,
-            display: "grid",
-            placeItems: "center",
-            background: theme.accent,
-            color: "#fff",
-            fontSize: 12,
-            fontWeight: 800,
-            boxShadow: "0 4px 12px rgba(0,0,0,0.26)",
-          }}>
-            {children.length}
-          </div>
+          <span className="folder-count" aria-label={`${count} items`}>{count}</span>
         </div>
-        <div style={{ marginTop: 6, display: "flex", justifyContent: "center" }}>
-          {editing ? (
+
+        <div style={{ marginTop: 8, display: "flex", justifyContent: "center", width: size }}>
+          {title !== null ? (
             <input
+              className="folder-label"
               value={title}
               autoFocus
               onPointerDown={(e) => e.stopPropagation()}
@@ -203,89 +90,45 @@ export default function FolderItem({ folder, items, gridUnit: G }: Props) {
               onBlur={commitTitle}
               onKeyDown={(e) => {
                 if (e.key === "Enter") commitTitle();
-                if (e.key === "Escape") {
-                  setTitle(folder.folderName ?? folder.title ?? "Untitled Folder");
-                  setEditing(false);
-                }
+                if (e.key === "Escape") setTitle(null);
               }}
-              style={{
-                width: Math.max(126, size + 18),
-                border: "none",
-                outline: `1.5px solid ${labelBorder}`,
-                background: labelBg,
-                color: labelText,
-                borderRadius: 8,
-                padding: "5px 7px",
-                textAlign: "center",
-                fontFamily: "inherit",
-                fontSize: 12,
-                fontWeight: 700,
-              }}
+              style={{ width: Math.max(150, size + 40), flexShrink: 0 }}
             />
           ) : (
             <button
+              className="folder-label"
               onPointerDown={(e) => e.stopPropagation()}
               onDoubleClick={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                setEditing(true);
-              }}
-              title="Click to rename folder"
-              style={{
-                maxWidth: Math.max(136, size + 28),
-                border: `1px solid ${labelBorder}`,
-                background: labelBg,
-                color: labelText,
-                boxShadow: "0 4px 12px rgba(0,0,0,0.22)",
-                borderRadius: 9,
-                padding: "5px 9px",
-                fontSize: 12,
-                fontWeight: 800,
-                fontFamily: "inherit",
-                overflow: "hidden",
-                whiteSpace: "nowrap",
-                textOverflow: "ellipsis",
-                cursor: "text",
-              }}
+              onClick={() => setTitle(name)}
+              title="Click to rename"
+              style={{ maxWidth: Math.max(170, size + 60), cursor: "text", flexShrink: 0 }}
             >
-              {folder.folderName ?? folder.title ?? "Untitled Folder"}
+              {name}
             </button>
           )}
         </div>
       </div>
 
-      {contextMenu && createPortal(
+      {menu && (
         <NoteContextMenu
-          x={contextMenu.x}
-          y={contextMenu.y}
-          noteId={folder.id}
-          noteBadges={folder.badges}
-          itemType="folder"
-          onEdit={() => setEditing(true)}
-          onDelete={() => setShowDelete(true)}
-          onClose={() => setContextMenu(null)}
-        />,
-        document.body
+          x={menu.x} y={menu.y} item={folder}
+          onEdit={() => setTitle(name)}
+          onDelete={() => setConfirmDelete(true)}
+          onClose={() => setMenu(null)}
+        />
       )}
-      {showDelete && createPortal(
-        <DeleteConfirm
-          noteTitle={folder.folderName ?? folder.title}
-          itemType="folder"
-          detail="This folder and everything inside it will be permanently removed."
-          onConfirm={() => {
-            useNotesStore.getState().deleteItemTree(folder.id);
-            setShowDelete(false);
-          }}
-          onCancel={() => setShowDelete(false)}
-        />,
-        document.body
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Delete this folder?"
+          message={`“${name}” and everything inside it will be permanently removed.`}
+          confirmLabel="Delete folder"
+          danger
+          onConfirm={() => { setConfirmDelete(false); useNotesStore.getState().deleteItemTree(folder.id); }}
+          onCancel={() => setConfirmDelete(false)}
+        />
       )}
-      <style>{`
-        @keyframes folderPop {
-          from { opacity: 0; transform: scale(0.92); }
-          to { opacity: 1; transform: scale(1); }
-        }
-      `}</style>
     </>
   );
 }
+
+export default memo(FolderItem);

@@ -1,15 +1,20 @@
-// Module-level live drag positions — updated 60fps during drag without touching Zustand store.
-// ConnectionLayer reads from this map directly in a RAF loop.
+// Module-level live geometry for items being dragged or resized. Updated at
+// pointer rate without touching the Zustand store; ConnectionLayer subscribes
+// so ropes/arrows follow the item in real time.
 
-const positions = new Map<string, { px: number; py: number }>();
-let listeners: Array<() => void> = [];
+export interface LiveRect {
+  px: number;
+  py: number;
+  pw?: number;
+  ph?: number;
+}
 
-export function setLivePosition(id: string, pos: { px: number; py: number } | null) {
-  if (pos === null) {
-    positions.delete(id);
-  } else {
-    positions.set(id, pos);
-  }
+const positions = new Map<string, LiveRect>();
+const listeners = new Set<() => void>();
+
+export function setLivePosition(id: string, rect: LiveRect | null) {
+  if (rect === null) positions.delete(id);
+  else positions.set(id, rect);
   listeners.forEach((fn) => fn());
 }
 
@@ -17,11 +22,7 @@ export function getLivePosition(id: string) {
   return positions.get(id);
 }
 
-export function hasAnyLivePosition() {
-  return positions.size > 0;
-}
-
 export function subscribeLivePositions(fn: () => void): () => void {
-  listeners.push(fn);
-  return () => { listeners = listeners.filter((l) => l !== fn); };
+  listeners.add(fn);
+  return () => { listeners.delete(fn); };
 }

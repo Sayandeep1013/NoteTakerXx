@@ -1,734 +1,312 @@
 "use client";
 
-import { useRef, useState, useEffect, useCallback } from "react";
-import { createPortal } from "react-dom";
-import { useGesture } from "@use-gesture/react";
-import { useNotesStore, Note as NoteType } from "@/store/notes";
-import { setLivePosition } from "@/lib/livePositions";
-import { useTheme } from "@/hooks/useTheme";
-import { DEFAULT_BADGES } from "@/lib/badges";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useNotesStore, type Note as NoteType } from "@/store/notes";
+import { useAllBadges } from "@/lib/badges";
+import { noteColorVar } from "@/lib/colors";
+import { handleItemModePointer } from "@/lib/items";
+import { listKeyEdit, toggleTodoAt } from "@/lib/noteText";
+import { clampNoteFont, DEFAULT_NOTE_FONT, GRID, MAX_NOTE_FONT, MIN_NOTE_FONT, MIN_NOTE_SIZE, NOTE_HEADER_H } from "@/lib/constants";
+import { useItemDrag } from "@/hooks/useItemDrag";
+import { ResizeHandle, RotateHandle, type PixelRect } from "./ItemHandles";
+import NoteBody from "./NoteBody";
 import NoteFullscreen from "./NoteFullscreen";
-import DeleteConfirm from "./DeleteConfirm";
 import NoteContextMenu from "./NoteContextMenu";
+import { ConfirmDialog } from "./ui/Modal";
+import { EditIcon, ExpandIcon, LockIcon, TrashIcon, UnlockIcon } from "./ui/icons";
 
-export type ResizeDir = "n"|"s"|"e"|"w"|"nw"|"ne"|"sw"|"se";
+const SAVE_DELAY = 400;
 
-// ── Rich text helpers ────────────────────────────────────────────
+const SLASH_COMMANDS = [
+  { label: "Bullet list", hint: "- item", prefix: "- " },
+  { label: "Numbered list", hint: "1. item", prefix: "1. " },
+  { label: "To-do", hint: "[ ] task", prefix: "[ ] " },
+];
 
-type LineType = "bullet" | "todo-open" | "todo-done" | "numbered" | "plain";
-
-function detectLine(line: string): { type: LineType; content: string; num?: number } {
-  if (line.startsWith("- "))   return { type: "bullet",    content: line.slice(2) };
-  if (line.startsWith(". "))   return { type: "bullet",    content: line.slice(2) }; // dot bullet
-  if (line.startsWith("• "))   return { type: "bullet",    content: line.slice(2) }; // unicode bullet
-  if (line.startsWith("[ ] ")) return { type: "todo-open", content: line.slice(4) };
-  if (line.startsWith("[x] ")) return { type: "todo-done", content: line.slice(4) };
-  const m = line.match(/^(\d+)\. (.*)/);
-  if (m)                        return { type: "numbered",  content: m[2], num: parseInt(m[1]) };
-  return                               { type: "plain",     content: line };
+export function noteMetrics(fontSize = DEFAULT_NOTE_FONT) {
+  return {
+    fontSize,
+    titleSize: Math.min(44, fontSize + 3),
+    lineStep: Math.round(Math.max(20, fontSize * 1.6)),
+  };
 }
 
-function lineContinuation(line: string): string | null {
-  const { type, num } = detectLine(line);
-  if (type === "bullet")   return "- ";
-  if (type === "todo-open" || type === "todo-done") return "[ ] ";
-  if (type === "numbered" && num !== undefined) return `${num + 1}. `;
-  return null;
-}
+function Note({ note }: { note: NoteType }) {
+  const isSelected = useNotesStore((s) => s.selectedItemIds.includes(note.id));
+  const isHighlighted = useNotesStore((s) => s.highlightedNoteId === note.id);
+  const isConnectSource = useNotesStore((s) => s.connectionMode === note.id);
+  const badges = useAllBadges();
 
-// ── Component ────────────────────────────────────────────────────
-
-interface Props { note: NoteType; gridUnit: number; }
-
-const MIN_NOTE_FONT = 10;
-const MAX_NOTE_FONT = 40;
-
-function clampNoteFontSize(size: number) {
-  return Math.min(MAX_NOTE_FONT, Math.max(MIN_NOTE_FONT, size));
-}
-
-export default function Note({ note, gridUnit: G }: Props) {
-  const {
-    updateNote, deleteNote, bringToFront,
-    badgeMode, setBadgeMode, toggleNoteBadge, customBadges,
-    newNoteId, setNewNoteId,
-    connectionMode, setConnectionMode, addConnection,
-    setFocusedNoteId, pendingInsert, setPendingInsert,
-    highlightedNoteId, setHighlightedNoteId,
-    selectedItemIds, toggleSelectedItem, moveItemsByGrid, selectionMode,
-    ropeMode,
-  } = useNotesStore();
-  const panX = useNotesStore((s) => s.canvas.panX);
-  const panY = useNotesStore((s) => s.canvas.panY);
-  const zoom = useNotesStore((s) => s.canvas.zoom || 1);
-  const theme = useTheme();
-  const isDark = theme.isDark;
-
-  const [hovered, setHovered]           = useState(false);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [showDelete, setShowDelete]     = useState(false);
-  const [isDragging, setIsDragging]     = useState(false);
-  const [isEditing, setIsEditing]       = useState(false);
-  const [editFocus, setEditFocus]       = useState<"title" | "body">("title");
-  const [contextMenu, setContextMenu]   = useState<{ x: number; y: number } | null>(null);
-
-  const [dragPos, setDragPos]     = useState<{ x: number; y: number } | null>(null);
-  const [resizeDims, setResizeDims] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
-
-  const [editTitle, setEditTitle] = useState(note.title);
-  const [editBody,  setEditBody]  = useState(note.body);
-  const [slashMenu, setSlashMenu] = useState<{ pos: number; top: number } | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const titleRef = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const titleRef  = useRef<HTMLInputElement>(null);
-  const bodyRef   = useRef<HTMLTextAreaElement>(null);
-  const leaveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const focusTarget = useRef<"title" | "body">("title");
+  const pendingCursor = useRef<number | null>(null);
 
-  const onNoteEnter = () => { clearTimeout(leaveTimer.current); setHovered(true); };
-  const onNoteLeave = () => { leaveTimer.current = setTimeout(() => setHovered(false), 650); };
+  // A note created from the + button opens straight into edit mode.
+  const [editing, setEditing] = useState(() => useNotesStore.getState().newNoteId === note.id);
+  const [draft, setDraft] = useState({ title: note.title, body: note.body });
+  const [slashAt, setSlashAt] = useState<{ pos: number; top: number } | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [fsOrigin, setFsOrigin] = useState<DOMRect | null>(null);
+  const [liveRect, setLiveRect] = useState<PixelRect | null>(null);
+  const [liveRotation, setLiveRotation] = useState<number | null>(null);
 
-  useEffect(() => {
-    if (!isEditing) { setEditTitle(note.title); setEditBody(note.body); }
-  }, [note.title, note.body, isEditing]);
-
-  // Auto-focus when new note is created via +
-  useEffect(() => {
-    if (newNoteId === note.id) {
-      setIsEditing(true); setEditFocus("title"); setNewNoteId(null);
-    }
-  }, [newNoteId, note.id, setNewNoteId]);
-
-  // Focus the correct input on edit mode entry
-  useEffect(() => {
-    if (!isEditing) return;
-    const t = setTimeout(() => {
-      if (editFocus === "title") { titleRef.current?.focus(); titleRef.current?.select(); }
-      else { const ta = bodyRef.current; if (!ta) return; ta.focus(); const l = ta.value.length; ta.setSelectionRange(l, l); }
-    }, 30);
-    return () => clearTimeout(t);
-  }, [isEditing, editFocus]);
-
-  // Track focused note in store (for sidebar bullet/todo buttons)
-  useEffect(() => {
-    setFocusedNoteId(isEditing ? note.id : null);
-  }, [isEditing, note.id, setFocusedNoteId]);
-
-  // Apply pending insert from sidebar buttons
-  useEffect(() => {
-    if (!pendingInsert) return;
-    const ta = bodyRef.current;
-    if (!isEditing) { setIsEditing(true); setEditFocus("body"); return; }
-    if (!ta) return;
-    const prefix = pendingInsert === "bullet" ? "- " : "[ ] ";
-    insertPrefix(prefix, ta);
-    setPendingInsert(null);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingInsert]);
-
-  const scheduleEdit = useCallback((title: string, body: string) => {
-    clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => updateNote(note.id, { title, body }), 400);
-  }, [note.id, updateNote]);
-
-  const flushEdit = useCallback(() => {
-    clearTimeout(saveTimer.current);
-    updateNote(note.id, { title: editTitle, body: editBody });
-  }, [editTitle, editBody, note.id, updateNote]);
-
-  const exitEdit = useCallback(() => { flushEdit(); setIsEditing(false); }, [flushEdit]);
-  const enterEdit = (focus: "title" | "body" = "title") => { if (note.locked) return; setEditFocus(focus); setIsEditing(true); };
+  const { bind, dragPos, dragging } = useItemDrag(note, { disabled: note.locked || editing });
+  const { fontSize, titleSize, lineStep } = noteMetrics(note.fontSize);
 
   useEffect(() => {
-    if (!isEditing) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") exitEdit(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [isEditing, exitEdit]);
-
-  // ── Insert prefix at cursor (toggle off if already present on line) ──
-  const insertPrefix = (prefix: string, ta: HTMLTextAreaElement) => {
-    const pos  = ta.selectionStart;
-    const text = ta.value;
-    const lineStart = text.lastIndexOf("\n", pos - 1) + 1;
-    const restOfLine = text.substring(lineStart);
-    let newText: string, newPos: number;
-
-    if (restOfLine.startsWith(prefix)) {
-      // Toggle off
-      newText = text.substring(0, lineStart) + text.substring(lineStart + prefix.length);
-      newPos  = Math.max(lineStart, pos - prefix.length);
-    } else {
-      // Toggle on — strip other prefixes first
-      const { type } = detectLine(restOfLine);
-      let stripped = restOfLine;
-      if (type === "bullet")    stripped = stripped.slice(2);
-      if (type === "todo-open") stripped = stripped.slice(4);
-      if (type === "todo-done") stripped = stripped.slice(4);
-      const m = stripped.match(/^\d+\. /); if (m) stripped = stripped.slice(m[0].length);
-      newText = text.substring(0, lineStart) + prefix + stripped;
-      newPos  = lineStart + prefix.length;
-    }
-
-    setEditBody(newText);
-    scheduleEdit(editTitle, newText);
-    setTimeout(() => { ta.setSelectionRange(newPos, newPos); ta.focus(); }, 0);
-  };
-
-  // ── Smart Enter / Backspace in body textarea ──────────────────
-  const applySlashCommand = (prefix: string) => {
-    const ta = bodyRef.current;
-    if (!ta || !slashMenu) return;
-    const pos = slashMenu.pos;
-    const before = editBody.slice(0, pos);
-    const after = editBody.slice(editBody[pos] === "/" ? pos + 1 : pos);
-    const newText = before + prefix + after;
-    const nextPos = before.length + prefix.length;
-    setEditBody(newText);
-    scheduleEdit(editTitle, newText);
-    setSlashMenu(null);
-    setTimeout(() => {
-      ta.focus();
-      ta.setSelectionRange(nextPos, nextPos);
-    }, 0);
-  };
-
-  const handleBodyKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    const ta = e.currentTarget;
-
-    // Ctrl+. → bullet, Ctrl+/ → todo
-    if ((e.ctrlKey || e.metaKey) && e.key === ".") { e.preventDefault(); insertPrefix("- ", ta); return; }
-    if ((e.ctrlKey || e.metaKey) && e.key === "/") { e.preventDefault(); insertPrefix("[ ] ", ta); return; }
-
-    if (e.key === "/") {
-      const pos = ta.selectionStart;
-      const text = ta.value;
-      const lineStart = text.lastIndexOf("\n", pos - 1) + 1;
-      const currentLine = text.substring(lineStart, pos);
-      if (!currentLine.trim()) {
-        const lineIndex = text.slice(0, lineStart).split("\n").length - 1;
-        setTimeout(() => setSlashMenu({ pos, top: Math.min(ta.clientHeight - 10, 50 + lineIndex * lineStep) }), 0);
-      }
-      return;
-    }
-
-    if (e.key === "Enter") {
-      setSlashMenu(null);
-      const pos  = ta.selectionStart;
-      const text = ta.value;
-      const lineStart = text.lastIndexOf("\n", pos - 1) + 1;
-      const currentLine = text.substring(lineStart, pos);
-      const cont = lineContinuation(currentLine);
-
-      if (cont !== null) {
-        e.preventDefault();
-        const { content } = detectLine(currentLine);
-        if (!content.trim()) {
-          // Empty formatted line → exit format
-          const before = text.substring(0, lineStart);
-          const after  = text.substring(pos);
-          const newText = before + after;
-          setEditBody(newText);
-          scheduleEdit(editTitle, newText);
-          setTimeout(() => { ta.setSelectionRange(lineStart, lineStart); }, 0);
-        } else {
-          // Continue format on new line
-          const ins = "\n" + cont;
-          const before = text.substring(0, pos);
-          const after  = text.substring(ta.selectionEnd);
-          const newText = before + ins + after;
-          setEditBody(newText);
-          scheduleEdit(editTitle, newText);
-          setTimeout(() => { const np = pos + ins.length; ta.setSelectionRange(np, np); }, 0);
-        }
-      }
-      return;
-    }
-
-    if (e.key === "Backspace") {
-      if (slashMenu) {
-        setSlashMenu(null);
-        return;
-      }
-      const pos  = ta.selectionStart;
-      const text = ta.value;
-      if (ta.selectionStart !== ta.selectionEnd) return; // let browser handle selection delete
-      const lineStart = text.lastIndexOf("\n", pos - 1) + 1;
-      const currentLine = text.substring(lineStart, pos);
-      const { type, content } = detectLine(currentLine);
-      // If cursor is right at end of an empty formatted line prefix, remove the prefix
-      if (type !== "plain" && !content.trim()) {
-        const prefixLen = currentLine.length;
-        if (pos === lineStart + prefixLen) {
-          e.preventDefault();
-          const before = text.substring(0, lineStart);
-          const after  = text.substring(lineStart + prefixLen);
-          const newText = before + after;
-          setEditBody(newText);
-          scheduleEdit(editTitle, newText);
-          setTimeout(() => { ta.setSelectionRange(lineStart, lineStart); }, 0);
-        }
-      }
-    }
-  };
-
-  // ── Toggle a todo checkbox in view mode ───────────────────────
-  const toggleTodo = (lineIndex: number) => {
-    const lines = note.body.split("\n");
-    const l = lines[lineIndex];
-    if (l.startsWith("[ ] "))      lines[lineIndex] = "[x] " + l.slice(4);
-    else if (l.startsWith("[x] ")) lines[lineIndex] = "[ ] " + l.slice(4);
-    const newBody = lines.join("\n");
-    setEditBody(newBody);
-    updateNote(note.id, { body: newBody });
-  };
-
-  const dragStart = useRef({ pixelX: 0, pixelY: 0 });
-  const dragActive = useRef(false);
-  const bindDrag = useGesture(
-    {
-      onDragStart: () => {
-        if (note.locked || isEditing) return;
-        bringToFront(note.id);
-        setIsDragging(true);
-        dragStart.current = { pixelX: note.x * G, pixelY: note.y * G };
-        dragActive.current = true;
-      },
-      onDrag: ({ movement: [mx, my] }) => {
-        if (!dragActive.current || note.locked || isEditing) return;
-        const px = dragStart.current.pixelX + mx / zoom;
-        const py = dragStart.current.pixelY + my / zoom;
-        setDragPos({ x: px, y: py });
-        setLivePosition(note.id, { px, py });
-      },
-      onDragEnd: ({ movement: [mx, my] }) => {
-        if (!dragActive.current) return;
-        dragActive.current = false;
-        setLivePosition(note.id, null);
-        if (note.locked || isEditing) { setDragPos(null); setIsDragging(false); return; }
-        const nextX = Math.round((dragStart.current.pixelX + mx / zoom) / G);
-        const nextY = Math.round((dragStart.current.pixelY + my / zoom) / G);
-        const dx = nextX - note.x;
-        const dy = nextY - note.y;
-        if (selectedItemIds.includes(note.id) && selectedItemIds.length > 1) {
-          moveItemsByGrid(selectedItemIds, dx, dy);
-        } else {
-          updateNote(note.id, { x: nextX, y: nextY });
-        }
-        setDragPos(null);
-        setIsDragging(false);
-      },
-    },
-    { drag: { filterTaps: true } }
-  );
-
-  const bg        = theme.noteColors[note.color] ?? "#fff176";
-  const textColor = theme.noteText;
-  const phColor   = theme.notePlaceholder;
-  const lineColor = isDark ? "rgba(0,0,0,0.18)" : "rgba(0,0,0,0.07)";
-  const bodyFontSize = note.fontSize ?? 13;
-  const titleFontSize = Math.min(44, bodyFontSize + 3);
-  const lineStep = Math.max(20.5, bodyFontSize * 1.58);
-  const adjustFontSize = (delta: number) => {
-    updateNote(note.id, { fontSize: clampNoteFontSize(bodyFontSize + delta) });
-  };
-
-  const visualX = dragPos?.x ?? resizeDims?.x ?? note.x * G;
-  const visualY = dragPos?.y ?? resizeDims?.y ?? note.y * G;
-  const visualW = resizeDims?.w ?? note.w * G;
-  const visualH = resizeDims?.h ?? note.h * G;
-
-  const originX = visualX * zoom + panX + (visualW * zoom) / 2;
-  const originY = visualY * zoom + panY + (visualH * zoom) / 2;
-
-  const shadow = isDark
-    ? hovered ? "0 12px 32px rgba(0,0,0,0.65)" : "0 4px 14px rgba(0,0,0,0.5)"
-    : hovered ? "0 12px 28px rgba(0,0,0,0.16)" : "0 3px 10px rgba(0,0,0,0.11)";
-
-  const allBadges = [
-    ...DEFAULT_BADGES,
-    ...customBadges.map((cb) => ({
-      id: cb.id, label: cb.label, color: "#888", ring: "#666",
-      Icon: ({ size = 28 }: { size?: number }) => (
-        <img src={cb.url} alt={cb.label} style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover" }} />
-      ),
-    })),
-  ];
-
-  const isConnectionSource = connectionMode === note.id;
-  const isHighlighted = highlightedNoteId === note.id;
-  const isSelected = selectedItemIds.includes(note.id);
+    const store = useNotesStore.getState();
+    if (store.newNoteId === note.id) store.setNewNoteId(null);
+  }, [note.id]);
 
   useEffect(() => {
     if (!isHighlighted) return;
-    const timer = setTimeout(() => setHighlightedNoteId(null), 2400);
+    const timer = setTimeout(() => useNotesStore.getState().setHighlightedNoteId(null), 2400);
     return () => clearTimeout(timer);
-  }, [isHighlighted, setHighlightedNoteId]);
+  }, [isHighlighted]);
 
-  const handlePointerDown = (e: React.PointerEvent) => {
-    e.stopPropagation();
-    if (selectionMode === "import" || e.ctrlKey || e.metaKey) {
-      toggleSelectedItem(note.id);
-      return;
-    }
-    if (badgeMode) { toggleNoteBadge(note.id, badgeMode); setBadgeMode(null); return; }
-    if (ropeMode || e.shiftKey) {
-      if (connectionMode && connectionMode !== note.id) { addConnection(connectionMode, note.id, "#e74c3c", "rope"); setConnectionMode(null); }
-      else { setConnectionMode(isConnectionSource ? null : note.id); }
-      return;
-    }
-    bringToFront(note.id);
+  useEffect(() => {
+    if (!editing) return;
+    const el = focusTarget.current === "title" ? titleRef.current : bodyRef.current;
+    if (!el) return;
+    el.focus({ preventScroll: true });
+    if (el === titleRef.current) titleRef.current.select();
+    else el.setSelectionRange(el.value.length, el.value.length);
+  }, [editing]);
+
+  useEffect(() => () => clearTimeout(saveTimer.current), []);
+
+  // Place the caret right after React commits a programmatic edit, before the next keystroke.
+  useLayoutEffect(() => {
+    if (pendingCursor.current === null || !bodyRef.current) return;
+    bodyRef.current.setSelectionRange(pendingCursor.current, pendingCursor.current);
+    pendingCursor.current = null;
+  }, [draft.body]);
+
+  const save = useCallback((next: { title: string; body: string }, immediate = false) => {
+    clearTimeout(saveTimer.current);
+    const commit = () => useNotesStore.getState().updateNote(note.id, next);
+    if (immediate) commit();
+    else saveTimer.current = setTimeout(commit, SAVE_DELAY);
+  }, [note.id]);
+
+  const updateDraft = (next: { title: string; body: string }) => {
+    setDraft(next);
+    save(next);
   };
+
+  const enterEdit = (focus: "title" | "body") => {
+    if (note.locked) return;
+    focusTarget.current = focus;
+    setDraft({ title: note.title, body: note.body });
+    setEditing(true);
+  };
+
+  const exitEdit = () => {
+    save(draft, true);
+    setSlashAt(null);
+    setEditing(false);
+  };
+
+  const applyBodyEdit = (text: string, cursor: number) => {
+    pendingCursor.current = cursor;
+    updateDraft({ ...draft, body: text });
+  };
+
+  const onBodyKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const ta = e.currentTarget;
+    if (e.key === "Escape") { e.preventDefault(); exitEdit(); return; }
+    if (slashAt && (e.key === "Backspace" || e.key === "Enter")) setSlashAt(null);
+    if (e.key === "/" && !e.ctrlKey && !e.metaKey) {
+      const pos = ta.selectionStart;
+      const lineStart = ta.value.lastIndexOf("\n", pos - 1) + 1;
+      if (!ta.value.substring(lineStart, pos).trim()) {
+        const lineIndex = ta.value.slice(0, lineStart).split("\n").length - 1;
+        setSlashAt({ pos, top: Math.min(ta.clientHeight - 10, 50 + lineIndex * lineStep) });
+      }
+      return;
+    }
+    const edit = listKeyEdit(e.key, e.ctrlKey || e.metaKey, ta.value, ta.selectionStart, ta.selectionEnd);
+    if (!edit) return;
+    e.preventDefault();
+    applyBodyEdit(edit.text, edit.cursor);
+  };
+
+  const applySlash = (prefix: string) => {
+    if (!slashAt) return;
+    const before = draft.body.slice(0, slashAt.pos);
+    const after = draft.body.slice(draft.body[slashAt.pos] === "/" ? slashAt.pos + 1 : slashAt.pos);
+    setSlashAt(null);
+    applyBodyEdit(before + prefix + after, before.length + prefix.length);
+  };
+
+  const toggleTodo = useCallback((lineIndex: number) => {
+    useNotesStore.getState().updateNote(note.id, { body: toggleTodoAt(note.body, lineIndex) });
+  }, [note.id, note.body]);
+
+  const setFont = (delta: number) => useNotesStore.getState().updateNote(note.id, { fontSize: clampNoteFont(fontSize + delta) });
+
+  const badgeById = useMemo(() => new Map(badges.map((b) => [b.id, b])), [badges]);
+
+  const x = dragPos?.x ?? liveRect?.x ?? note.x * GRID;
+  const y = dragPos?.y ?? liveRect?.y ?? note.y * GRID;
+  const w = liveRect?.w ?? note.w * GRID;
+  const h = liveRect?.h ?? note.h * GRID;
+  const contentH = h - NOTE_HEADER_H;
+  const ruleStyle = { "--line-step": `${lineStep}px` } as React.CSSProperties;
 
   return (
     <>
       <div
-        onMouseEnter={onNoteEnter}
-        onMouseLeave={onNoteLeave}
-        onPointerDown={handlePointerDown}
-        onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenu({ x: e.clientX, y: e.clientY }); }}
-        className={`sticky-note-font ${badgeMode ? "badge-mode-active" : isConnectionSource ? "connection-source-active" : ""}`}
-        style={{
-          position: "absolute", left: visualX, top: visualY, width: visualW, height: visualH,
-          background: bg, borderRadius: 14,
-          transform: `rotate(${note.rotation}deg)`,
-          transition: "transform 200ms ease, box-shadow 200ms ease",
-          zIndex: note.zIndex, overflow: "visible", pointerEvents: "auto",
-          boxShadow: shadow, cursor: isDragging ? "grabbing" : "default",
-          outline: isSelected ? "2.5px dashed var(--accent)" : undefined,
-          outlineOffset: isSelected ? 6 : undefined,
+        ref={rootRef}
+        data-item={note.id}
+        data-connectable="true"
+        data-selected={isSelected}
+        data-highlighted={isHighlighted}
+        data-connect-source={isConnectSource}
+        data-dragging={dragging || liveRect !== null || liveRotation !== null}
+        data-editing={editing}
+        tabIndex={-1}
+        className="item note"
+        onPointerDownCapture={(e) => {
+          if (handleItemModePointer(note.id, e, { connectable: true })) { e.preventDefault(); e.stopPropagation(); }
         }}
+        onPointerDown={() => useNotesStore.getState().bringToFront(note.id)}
+        onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY }); }}
+        style={{
+          left: x, top: y, width: w, height: h,
+          zIndex: note.zIndex,
+          transform: `rotate(${liveRotation ?? note.rotation}deg)`,
+          background: noteColorVar(note.color),
+          "--note-bg": noteColorVar(note.color),
+        } as React.CSSProperties}
       >
-        {/* Noise + tape */}
-        <div style={{ position: "absolute", inset: 0, borderRadius: 14, opacity: 0.09, filter: "url(#paper-noise)", pointerEvents: "none", mixBlendMode: "multiply", background: "transparent" }} />
-        <div style={{ position: "absolute", top: -10, left: "50%", transform: "translateX(-50%)", width: 46, height: 18, background: isDark ? "rgba(255,250,200,0.22)" : "rgba(255,253,200,0.65)", borderRadius: 3, boxShadow: "0 1px 3px rgba(0,0,0,0.10)", pointerEvents: "none", zIndex: 0 }} />
+        <div className="tape" />
 
-        {/* ── Header ── */}
-        <div style={{ display: "flex", alignItems: "center", height: 34, padding: "0 9px", gap: 5, borderRadius: "14px 14px 0 0", background: "rgba(0,0,0,0.07)" }}>
-          <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
-            <Dot color="#34c759" title="Full screen" onClick={() => setIsFullscreen(true)}>{hovered && <ExpandIcon />}</Dot>
-            <Dot color="#f5c542" title="Edit" onClick={() => enterEdit("title")}>{hovered && <PenIcon />}</Dot>
-            <Dot color={note.locked ? "#5c6bc0" : (isDark ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.18)")} title={note.locked ? "Unlock" : "Lock"} onClick={() => updateNote(note.id, { locked: !note.locked })}>
-              {hovered && (note.locked ? <LockClosedIcon /> : <LockOpenIcon />)}
-            </Dot>
+        <div className="note-header">
+          <button className="traffic" style={{ "--dot": "#34c759" } as React.CSSProperties} title="Open full screen" aria-label="Open full screen"
+            onClick={() => setFsOrigin(rootRef.current?.getBoundingClientRect() ?? null)}>
+            <ExpandIcon size={9} />
+          </button>
+          <button className="traffic" style={{ "--dot": "#f5c542" } as React.CSSProperties} title="Edit" aria-label="Edit note"
+            disabled={note.locked} onClick={() => enterEdit("title")}>
+            <EditIcon size={9} strokeWidth={2.6} />
+          </button>
+          <button className={`traffic${note.locked ? " traffic--locked" : ""}`} title={note.locked ? "Unlock" : "Lock in place"} aria-label={note.locked ? "Unlock note" : "Lock note"}
+            onClick={() => useNotesStore.getState().updateNote(note.id, { locked: !note.locked })}>
+            {note.locked ? <LockIcon size={9} /> : <UnlockIcon size={9} />}
+          </button>
+          <div {...bind()} className={note.locked ? undefined : "drag-handle"} style={{ flex: 1, alignSelf: "stretch", display: "grid", placeItems: "center" }} title={note.locked ? "Locked" : "Drag to move"}>
+            {!note.locked && !editing && <span className="grip reveal"><span /><span /><span /></span>}
           </div>
-          <div className="note-drag-handle" style={{ flex: 1, height: "100%", display: "flex", alignItems: "center", justifyContent: "center", touchAction: "none" }} {...bindDrag()}>
-            {hovered && !note.locked && !isEditing && (
-              <div style={{ display: "flex", gap: 3 }}>{[0,1,2].map(i => <div key={i} style={{ width: 3, height: 3, borderRadius: "50%", background: textColor, opacity: 0.3 }} />)}</div>
-            )}
-          </div>
-          <FontSizeButton label="-" title="Decrease text size" onClick={() => adjustFontSize(-1)} disabled={bodyFontSize <= MIN_NOTE_FONT} />
-          <FontSizeButton label="+" title="Increase text size" onClick={() => adjustFontSize(1)} disabled={bodyFontSize >= MAX_NOTE_FONT} />
-          <Dot color="#ff453a" title="Delete" onClick={() => setShowDelete(true)} extraStyle={{ opacity: hovered ? 1 : 0.45, transition: "opacity 200ms" }}>{hovered && <TrashIcon />}</Dot>
+          <button className="note-mini-btn reveal" title="Smaller text" aria-label="Smaller text" disabled={fontSize <= MIN_NOTE_FONT} onClick={() => setFont(-1)}>−</button>
+          <button className="note-mini-btn reveal" title="Larger text" aria-label="Larger text" disabled={fontSize >= MAX_NOTE_FONT} onClick={() => setFont(1)}>+</button>
+          <button className="traffic traffic--delete" style={{ "--dot": "#ff453a" } as React.CSSProperties} title="Delete" aria-label="Delete note"
+            onClick={() => setConfirmDelete(true)}>
+            <TrashIcon size={9} strokeWidth={2.6} />
+          </button>
         </div>
 
-        {(isHighlighted || isSelected) && <NoteSpotlight />}
-
-        {/* ── Content ── */}
-        {isEditing ? (
-          <div style={{ display: "flex", flexDirection: "column", height: visualH - 34, padding: "7px 11px 9px" }} onPointerDown={(e) => e.stopPropagation()}>
+        {editing ? (
+          <div
+            style={{ display: "flex", flexDirection: "column", height: contentH, padding: "7px 11px 9px", position: "relative" }}
+            onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) exitEdit(); }}
+          >
             <input
               ref={titleRef}
-              value={editTitle}
+              value={draft.title}
               placeholder="Title"
-              onChange={(e) => { setEditTitle(e.target.value); scheduleEdit(e.target.value, editBody); }}
-              onBlur={(e) => {
-                // Only exit edit if focus is leaving the entire note (not just moving to body)
-                if (e.relatedTarget === bodyRef.current) return;
-                exitEdit();
-              }}
+              onChange={(e) => updateDraft({ ...draft, title: e.target.value })}
               onKeyDown={(e) => {
-                if (e.key === "Tab") { e.preventDefault(); setEditFocus("body"); bodyRef.current?.focus(); }
-                if (e.key === "Escape") exitEdit();
+                if (e.key === "Escape") { e.preventDefault(); exitEdit(); }
+                if (e.key === "Enter" || (e.key === "Tab" && !e.shiftKey)) { e.preventDefault(); bodyRef.current?.focus(); }
               }}
-              style={{ background: "transparent", border: "none", outline: "none", fontWeight: 800, fontSize: titleFontSize, color: textColor, fontFamily: "inherit", width: "100%", padding: 0, marginBottom: 6, cursor: "text" }}
+              style={{ background: "transparent", border: "none", outline: "none", fontWeight: 700, fontSize: titleSize, width: "100%", padding: 0, marginBottom: 6 }}
             />
-            <div style={{ width: "100%", height: 1.5, background: `${textColor}36`, marginBottom: 8, flexShrink: 0 }} />
+            <div style={{ height: 1.5, background: "currentColor", opacity: 0.2, marginBottom: 6, flexShrink: 0 }} />
             <textarea
               ref={bodyRef}
-              value={editBody}
-              placeholder="- bullet  |  1. numbered  |  [ ] todo  |  Ctrl+. bullet  |  Ctrl+/ todo"
+              value={draft.body}
+              className="ruled"
+              placeholder={"Write something…\n- bullet   1. numbered   [ ] todo\nType / for a list, Ctrl+. bullet, Ctrl+/ todo"}
               onChange={(e) => {
-                setEditBody(e.target.value);
-                scheduleEdit(editTitle, e.target.value);
-                if (slashMenu && e.target.value[slashMenu.pos] !== "/") setSlashMenu(null);
+                updateDraft({ ...draft, body: e.target.value });
+                if (slashAt && e.target.value[slashAt.pos] !== "/") setSlashAt(null);
               }}
-              onBlur={(e) => {
-                if (e.relatedTarget === titleRef.current) return;
-                exitEdit();
-              }}
-              onKeyDown={handleBodyKeyDown}
+              onKeyDown={onBodyKeyDown}
               style={{
-                background: "transparent", border: "none", outline: "none", resize: "none",
-                fontSize: bodyFontSize, fontWeight: 400, color: textColor, fontFamily: "inherit",
-                lineHeight: "1.55", width: "100%", flex: 1, padding: 0, cursor: "text",
-                backgroundImage: `repeating-linear-gradient(transparent, transparent ${lineStep - 1.5}px, ${lineColor} ${lineStep - 1.5}px, ${lineColor} ${lineStep}px)`,
-                backgroundSize: `100% ${lineStep}px`,
+                ...ruleStyle,
+                flex: 1, width: "100%", padding: 0, resize: "none",
+                background: "transparent", border: "none", outline: "none",
+                fontSize, lineHeight: `${lineStep}px`,
               }}
             />
-            {slashMenu && (
-              <SlashCommandMenu top={slashMenu.top} onSelect={applySlashCommand} />
+            {slashAt && (
+              <div className="menu surface" style={{ position: "absolute", left: 10, top: slashAt.top, minWidth: 176, zIndex: 80, fontFamily: "var(--font-ui)" }}>
+                {SLASH_COMMANDS.map((cmd) => (
+                  <button key={cmd.prefix} className="menu-item" onPointerDown={(e) => e.preventDefault()} onClick={() => applySlash(cmd.prefix)} style={{ justifyContent: "space-between" }}>
+                    <span style={{ fontWeight: 600 }}>{cmd.label}</span>
+                    <span className="muted" style={{ fontSize: 11 }}>{cmd.hint}</span>
+                  </button>
+                ))}
+              </div>
             )}
           </div>
         ) : (
-          <div style={{ height: visualH - 34, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-            {/* Title */}
-            <div className="note-title-clickable" onClick={() => enterEdit("title")} style={{ padding: "8px 11px 5px", fontWeight: 800, fontSize: titleFontSize, color: textColor, flexShrink: 0, cursor: "text" }}>
-              <div className="note-rendered-text" style={{ overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
-                {note.title || <span style={{ color: phColor, fontWeight: 500 }}>Title</span>}
-              </div>
+          <div style={{ height: contentH, display: "flex", flexDirection: "column", overflow: "hidden", cursor: note.locked ? "default" : "text" }}>
+            <div onClick={() => enterEdit("title")} style={{ padding: "8px 11px 5px", fontWeight: 700, fontSize: titleSize, flexShrink: 0, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
+              {note.title || <span className="note-placeholder" style={{ fontWeight: 400 }}>Title</span>}
             </div>
-            <div style={{ width: "calc(100% - 22px)", height: 1.5, background: `${textColor}36`, margin: "0 11px 5px", flexShrink: 0 }} />
-            {/* Body — rich text view */}
-            <div
-              className="note-body-clickable"
-              onClick={() => enterEdit("body")}
-              style={{
-                padding: "2px 11px 9px", fontSize: bodyFontSize, flex: 1, overflow: "hidden", cursor: "text",
-                backgroundImage: `repeating-linear-gradient(transparent, transparent ${lineStep - 1.5}px, ${lineColor} ${lineStep - 1.5}px, ${lineColor} ${lineStep}px)`,
-                backgroundSize: `100% ${lineStep}px`,
-              }}
-            >
+            <div style={{ height: 1.5, margin: "0 11px 5px", background: "currentColor", opacity: 0.2, flexShrink: 0 }} />
+            <div className="ruled" onClick={() => enterEdit("body")} style={{ ...ruleStyle, flex: 1, overflow: "hidden", padding: "0 11px 9px" }}>
               {note.body
-                ? <BodyRenderer body={note.body} textColor={textColor} onToggle={toggleTodo} fontSize={bodyFontSize} />
-                : <span style={{ color: phColor, lineHeight: "1.55", fontSize: bodyFontSize }}>Tap to write...</span>
-              }
+                ? <NoteBody body={note.body} fontSize={fontSize} lineHeight={lineStep} onToggleTodo={toggleTodo} />
+                : <span className="note-placeholder" style={{ fontSize, lineHeight: `${lineStep}px` }}>Tap to write…</span>}
             </div>
           </div>
         )}
 
-        {/* Badges */}
         {note.badges.length > 0 && (
-          <div style={{ position: "absolute", bottom: -16, right: 8, display: "flex", gap: 2, zIndex: 5, pointerEvents: "auto" }}>
-            {note.badges.map((bid) => {
-              const badge = allBadges.find((b) => b.id === bid);
-              if (!badge) return null;
-              const { Icon } = badge;
-              return (
-                <div key={bid} title={badge.label} style={{ filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.25))", transition: "transform 120ms" }}
-                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.transform = "scale(1.18) translateY(-2px)"; }}
-                  onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = "scale(1)"; }}
-                >
-                  <Icon size={28} />
-                </div>
-              );
+          <div className="item-badges">
+            {note.badges.map((id) => {
+              const badge = badgeById.get(id);
+              return badge ? <span key={id} title={badge.label}><badge.Icon size={28} /></span> : null;
             })}
           </div>
         )}
 
-        {/* Visible handles */}
-        {!note.locked && hovered && !isEditing && (
-          <VisibleResizeHandle note={note} G={G} zoom={zoom} accent={theme.accent} onPixelUpdate={setResizeDims} onGridCommit={(p) => { updateNote(note.id, p); setResizeDims(null); }} onStayHovered={onNoteEnter} />
-        )}
-        {!note.locked && hovered && !isEditing && (
-          <RotationHandle note={note} G={G} panX={panX} panY={panY} zoom={zoom} accent={theme.accent} onRotate={(r) => updateNote(note.id, { rotation: r })} onStayHovered={onNoteEnter} />
+        {!note.locked && !editing && (
+          <>
+            <ResizeHandle item={note} minSize={MIN_NOTE_SIZE} onLive={setLiveRect} />
+            <RotateHandle item={note} onLive={setLiveRotation} />
+          </>
         )}
       </div>
 
-      {/* Portals */}
-      {contextMenu && createPortal(<NoteContextMenu x={contextMenu.x} y={contextMenu.y} noteId={note.id} noteBadges={note.badges} itemType="note" onEdit={() => enterEdit("title")} onDelete={() => setShowDelete(true)} onClose={() => setContextMenu(null)} />, document.body)}
-      {isFullscreen && createPortal(<NoteFullscreen note={note} theme={theme} originX={originX} originY={originY} originW={visualW * zoom} originH={visualH * zoom} onClose={() => setIsFullscreen(false)} />, document.body)}
-      {showDelete && createPortal(<DeleteConfirm noteTitle={note.title} onConfirm={() => { deleteNote(note.id); setShowDelete(false); }} onCancel={() => setShowDelete(false)} />, document.body)}
+      {menu && (
+        <NoteContextMenu
+          x={menu.x} y={menu.y} item={note}
+          onEdit={() => enterEdit("title")}
+          onDelete={() => setConfirmDelete(true)}
+          onClose={() => setMenu(null)}
+        />
+      )}
+      {fsOrigin && <NoteFullscreen note={note} origin={fsOrigin} onClose={() => setFsOrigin(null)} />}
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Delete this note?"
+          message={`${note.title ? `“${note.title}”` : "This note"} will be permanently removed.`}
+          confirmLabel="Delete note"
+          danger
+          onConfirm={() => { setConfirmDelete(false); useNotesStore.getState().deleteNote(note.id); }}
+          onCancel={() => setConfirmDelete(false)}
+        />
+      )}
     </>
   );
 }
 
-// ── Rich text view renderer ─────────────────────────────────────
-
-function BodyRenderer({ body, textColor, onToggle, fontSize }: { body: string; textColor: string; onToggle: (i: number) => void; fontSize: number }) {
-  const lines = body.split("\n");
-  return (
-    <div className="note-rendered-text" style={{ fontSize, lineHeight: "1.55" }}>
-      {lines.map((line, i) => {
-        const { type, content, num } = detectLine(line);
-
-        if (type === "bullet") return (
-          <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 6, minHeight: "1.55em" }}>
-            <span style={{ color: textColor, opacity: 0.55, flexShrink: 0, marginTop: "0.12em", fontSize: fontSize + 2 }}>•</span>
-            <span style={{ color: textColor }}>{content || " "}</span>
-          </div>
-        );
-
-        if (type === "todo-open") return (
-          <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 6, minHeight: "1.55em" }}>
-            <button onClick={(e) => { e.stopPropagation(); onToggle(i); }} style={{ flexShrink: 0, marginTop: "0.2em", width: 13, height: 13, border: `1.5px solid ${textColor}`, borderRadius: 3, background: "transparent", cursor: "pointer", padding: 0, opacity: 0.65 }} />
-            <span style={{ color: textColor }}>{content || " "}</span>
-          </div>
-        );
-
-        if (type === "todo-done") return (
-          <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 6, minHeight: "1.55em" }}>
-            <button onClick={(e) => { e.stopPropagation(); onToggle(i); }} style={{ flexShrink: 0, marginTop: "0.2em", width: 13, height: 13, border: `1.5px solid ${textColor}`, borderRadius: 3, background: textColor, cursor: "pointer", padding: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <svg width="8" height="8" viewBox="0 0 8 8" fill="none"><polyline points="1,4 3,6.5 7,1.5" stroke="white" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>
-            </button>
-            <span style={{ color: textColor, textDecoration: "line-through", opacity: 0.5 }}>{content || " "}</span>
-          </div>
-        );
-
-        if (type === "numbered") return (
-          <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 5, minHeight: "1.55em" }}>
-            <span style={{ color: textColor, opacity: 0.5, flexShrink: 0, minWidth: "1.8em", textAlign: "right", fontSize: Math.max(11, fontSize - 1), marginTop: "0.08em" }}>{num}.</span>
-            <span style={{ color: textColor }}>{content || " "}</span>
-          </div>
-        );
-
-        return <div key={i} style={{ color: textColor, minHeight: "1.55em" }}>{line || " "}</div>;
-      })}
-    </div>
-  );
-}
-
-// ── Sub-components ───────────────────────────────────────────────
-
-function SlashCommandMenu({ top, onSelect }: { top: number; onSelect: (prefix: string) => void }) {
-  const commands = [
-    { label: "Bullet list", hint: "- item", prefix: "- " },
-    { label: "Numbered list", hint: "1. item", prefix: "1. " },
-    { label: "To-do", hint: "[ ] task", prefix: "[ ] " },
-  ];
-  return (
-    <div
-      style={{
-        position: "absolute",
-        left: 10,
-        top,
-        width: 168,
-        zIndex: 80,
-        padding: 5,
-        borderRadius: 10,
-        background: "rgba(255,255,255,0.92)",
-        border: "1px solid rgba(0,0,0,0.14)",
-        boxShadow: "0 10px 28px rgba(0,0,0,0.18)",
-        backdropFilter: "blur(10px)",
-        fontFamily: "var(--font-geist-sans), system-ui, sans-serif",
-      }}
-      onPointerDown={(e) => e.stopPropagation()}
-    >
-      {commands.map((command) => (
-        <button
-          key={command.prefix}
-          onClick={() => onSelect(command.prefix)}
-          style={{
-            width: "100%",
-            border: "none",
-            background: "transparent",
-            borderRadius: 7,
-            padding: "7px 8px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 8,
-            cursor: "pointer",
-            color: "#222",
-            fontFamily: "inherit",
-            textAlign: "left",
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(92,107,192,0.12)"; }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-        >
-          <span style={{ fontSize: 12, fontWeight: 800 }}>{command.label}</span>
-          <span style={{ fontSize: 11, opacity: 0.55 }}>{command.hint}</span>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function Dot({ color, title, onClick, children, extraStyle }: { color: string; title: string; onClick: () => void; children?: React.ReactNode; extraStyle?: React.CSSProperties }) {
-  return (
-    <button onClick={(e) => { e.stopPropagation(); onClick(); }} title={title} style={{ width: 15, height: 15, borderRadius: "50%", background: color, border: "none", cursor: "pointer", padding: 0, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", ...extraStyle }}>
-      {children}
-    </button>
-  );
-}
-
-function FontSizeButton({ label, title, onClick, disabled }: { label: string; title: string; onClick: () => void; disabled: boolean }) {
-  return (
-    <button
-      onClick={(e) => { e.stopPropagation(); if (!disabled) onClick(); }}
-      title={title}
-      disabled={disabled}
-      style={{
-        width: 18,
-        height: 18,
-        borderRadius: "50%",
-        border: "none",
-        background: "rgba(0,0,0,0.12)",
-        color: "inherit",
-        cursor: disabled ? "default" : "pointer",
-        opacity: disabled ? 0.28 : 0.72,
-        padding: 0,
-        flexShrink: 0,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        fontSize: 13,
-        fontWeight: 900,
-        lineHeight: "18px",
-        fontFamily: "var(--font-geist-sans), system-ui, sans-serif",
-      }}
-    >
-      {label}
-    </button>
-  );
-}
-
-function NoteSpotlight() {
-  return (
-    <div
-      style={{
-        position: "absolute",
-        inset: -7,
-        borderRadius: 19,
-        border: "2.5px dashed var(--accent)",
-        pointerEvents: "none",
-        zIndex: 30,
-        animation: "noteSpotlightPulse 850ms ease-in-out infinite alternate",
-      }}
-    />
-  );
-}
-
-function VisibleResizeHandle({ note, G, zoom, accent, onPixelUpdate, onGridCommit, onStayHovered }: { note: NoteType; G: number; zoom: number; accent: string; onPixelUpdate: (d: { x: number; y: number; w: number; h: number }) => void; onGridCommit: (p: Partial<NoteType>) => void; onStayHovered: () => void }) {
-  const start = useRef({ x: 0, y: 0, w: 0, h: 0 });
-  const [active, setActive] = useState(false);
-  const [live, setLive] = useState({ w: note.w, h: note.h });
-  const bind = useGesture({
-    onDragStart: () => { setActive(true); start.current = { x: note.x * G, y: note.y * G, w: note.w * G, h: note.h * G }; },
-    onDrag: ({ movement: [mx, my] }) => { const s = start.current; const dx = mx / zoom, dy = my / zoom; const min = 4*G; const nw=Math.max(min,s.w-dx),nh=Math.max(min,s.h+dy); onPixelUpdate({ x: s.x+(s.w-nw), y: s.y, w: nw, h: nh }); setLive({ w: Math.round(nw/G), h: Math.round(nh/G) }); },
-    onDragEnd: ({ movement: [mx, my] }) => { const s = start.current; const dx = mx / zoom, dy = my / zoom; const min=4*G; const nw=Math.max(min,s.w-dx),nh=Math.max(min,s.h+dy); onGridCommit({ x: Math.round((s.x+(s.w-nw))/G), y: Math.round(s.y/G), w: Math.max(4,Math.round(nw/G)), h: Math.max(4,Math.round(nh/G)) }); setActive(false); },
-  }, { drag: { filterTaps: true } });
-  return (
-    <div {...bind()} onMouseEnter={onStayHovered} title="Drag to resize" style={{ position: "absolute", bottom: -36, left: -36, width: 36, height: 36, borderRadius: "50%", cursor: "sw-resize", touchAction: "none", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 20 }}>
-      <div style={{ width: 24, height: 24, borderRadius: "50%", background: active ? accent : "rgba(92,107,192,0.8)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: active ? `0 0 0 3px ${accent}44` : "0 2px 6px rgba(0,0,0,0.2)", transition: "background 150ms" }}>
-        <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><line x1="2" y1="11" x2="11" y2="2" stroke="#fff" strokeWidth="1.4" strokeLinecap="round"/><polyline points="2,7 2,11 6,11" stroke="#fff" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/><polyline points="11,6 11,2 7,2" stroke="#fff" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg>
-      </div>
-      {active && <div style={{ position: "absolute", bottom: 38, left: "50%", transform: "translateX(-50%)", background: "rgba(0,0,0,0.78)", color: "#fff", fontSize: 11, fontWeight: 600, padding: "3px 8px", borderRadius: 5, whiteSpace: "nowrap", pointerEvents: "none" }}>{live.w} × {live.h}</div>}
-    </div>
-  );
-}
-
-function RotationHandle({ note, G, panX, panY, zoom, accent, onRotate, onStayHovered }: { note: NoteType; G: number; panX: number; panY: number; zoom: number; accent: string; onRotate: (r: number) => void; onStayHovered: () => void }) {
-  const startRef = useRef({ startAngle: 0, startRotation: 0 });
-  const [active, setActive] = useState(false);
-  const [display, setDisplay] = useState(note.rotation);
-  const cx = () => (note.x * G + note.w * G / 2) * zoom + panX;
-  const cy = () => (note.y * G + note.h * G / 2) * zoom + panY;
-  const bind = useGesture({
-    onDragStart: ({ xy: [mx, my] }) => { setActive(true); startRef.current = { startAngle: Math.atan2(my-cy(), mx-cx()), startRotation: note.rotation }; },
-    onDrag: ({ xy: [mx, my] }) => { const ca=Math.atan2(my-cy(),mx-cx()); const delta=(ca-startRef.current.startAngle)*(180/Math.PI); const raw=startRef.current.startRotation+delta; const n=((raw%360)+360)%360; const s=Math.round((n>180?n-360:n)*2)/2; setDisplay(s); onRotate(s); },
-    onDragEnd: () => setActive(false),
-  }, { drag: { filterTaps: true } });
-  return (
-    <div {...bind()} onMouseEnter={onStayHovered} onClick={(e) => { e.stopPropagation(); onRotate(0); setDisplay(0); }} title={`${display.toFixed(1)}° — drag to rotate · click to reset`} style={{ position: "absolute", bottom: -36, right: -36, width: 36, height: 36, borderRadius: "50%", cursor: active ? "grabbing" : "grab", touchAction: "none", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 20 }}>
-      <div style={{ width: 24, height: 24, borderRadius: "50%", background: active ? accent : "rgba(92,107,192,0.8)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: active ? `0 0 0 3px ${accent}44` : "0 2px 6px rgba(0,0,0,0.2)", transition: "background 150ms" }}>
-        <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M10.5 6.5A4 4 0 012.5 6.5" stroke="#fff" strokeWidth="1.5" strokeLinecap="round"/><polyline points="10.5,4 10.5,6.5 8,6.5" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-      </div>
-      {active && <div style={{ position: "absolute", bottom: 38, left: "50%", transform: "translateX(-50%)", background: "rgba(0,0,0,0.78)", color: "#fff", fontSize: 11, fontWeight: 600, padding: "3px 8px", borderRadius: 5, whiteSpace: "nowrap", pointerEvents: "none" }}>{display.toFixed(1)}°</div>}
-    </div>
-  );
-}
-
-function ExpandIcon()     { return <svg width="9" height="9" viewBox="0 0 9 9" fill="none"><polyline points="3.5,1 1,1 1,3.5" stroke="rgba(0,0,0,0.55)" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/><polyline points="5.5,8 8,8 8,5.5" stroke="rgba(0,0,0,0.55)" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
-function PenIcon()        { return <svg width="9" height="9" viewBox="0 0 9 9" fill="none"><path d="M6 1.5L7.5 3 3 7.5H1.5V6L6 1.5Z" stroke="rgba(0,0,0,0.55)" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
-function LockClosedIcon() { return <svg width="9" height="9" viewBox="0 0 9 9" fill="none"><rect x="1.5" y="4.5" width="6" height="3.5" rx="0.8" stroke="rgba(255,255,255,0.7)" strokeWidth="1.1"/><path d="M3 4.5V3A1.5 1.5 0 016 3v1.5" stroke="rgba(255,255,255,0.7)" strokeWidth="1.1" strokeLinecap="round"/></svg>; }
-function LockOpenIcon()   { return <svg width="9" height="9" viewBox="0 0 9 9" fill="none"><rect x="1.5" y="4.5" width="6" height="3.5" rx="0.8" stroke="rgba(0,0,0,0.45)" strokeWidth="1.1"/><path d="M3 4.5V3A1.5 1.5 0 016 3" stroke="rgba(0,0,0,0.45)" strokeWidth="1.1" strokeLinecap="round"/></svg>; }
-function TrashIcon()      { return <svg width="9" height="9" viewBox="0 0 9 9" fill="none"><line x1="1" y1="2.5" x2="8" y2="2.5" stroke="rgba(0,0,0,0.55)" strokeWidth="1.1" strokeLinecap="round"/><path d="M3 2.5V1.5h3v1M2.5 2.5l.5 5h3l.5-5" stroke="rgba(0,0,0,0.55)" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
+export default memo(Note);

@@ -33,7 +33,7 @@ function fromRow(r: Record<string, unknown>): Connection {
 }
 
 export function useConnectionSync(user: User | null, syncReady = true) {
-  const { connections } = useNotesStore();
+  const connections = useNotesStore((s) => s.connections);
   const prevConnections = useRef<Connection[]>([]);
   const loadedFor = useRef<string | null | undefined>(undefined);
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());

@@ -1,13 +1,9 @@
 "use client";
 
-import { useEffect, useState, useReducer } from "react";
-import { useNotesStore, type Connection, type Note, type AnchorSide } from "@/store/notes";
+import { memo, useEffect, useMemo, useReducer, useState } from "react";
+import { useNotesStore, type Note, type AnchorSide } from "@/store/notes";
 import { getLivePosition, subscribeLivePositions } from "@/lib/livePositions";
-
-interface Props {
-  notes: Note[];
-  gridUnit: number;
-}
+import { GRID } from "@/lib/constants";
 
 type Pt = { x: number; y: number };
 type Rect = { x: number; y: number; w: number; h: number };
@@ -24,8 +20,10 @@ function anchorToDir(a: AnchorSide): Dir {
   }
 }
 
-function noteRect(n: Note, G: number, livePx?: { px: number; py: number }): Rect {
-  return { x: livePx?.px ?? n.x * G, y: livePx?.py ?? n.y * G, w: n.w * G, h: n.h * G };
+/** Item rect in world px, preferring live drag/resize geometry. */
+function itemRect(n: Note): Rect {
+  const live = getLivePosition(n.id);
+  return { x: live?.px ?? n.x * GRID, y: live?.py ?? n.y * GRID, w: live?.pw ?? n.w * GRID, h: live?.ph ?? n.h * GRID };
 }
 
 function noteAnchorPt(r: Rect, a: AnchorSide): Pt {
@@ -76,7 +74,7 @@ function scoreCandidate(pts: Pt[], soft: Rect[], hard: Rect[]): [number, number]
 
 const STUB = 32; // px to exit perpendicularly from anchor edge
 
-function buildCandidates(sExit: Pt, srcDir: Dir, tEntry: Pt, tgtDir: Dir): Pt[][] {
+function buildCandidates(sExit: Pt, srcDir: Dir, tEntry: Pt): Pt[][] {
   // sExit = srcAnchor + srcDir*STUB
   // tEntry = tgtAnchor + tgtDir*STUB (note: tgtDir points AWAY from target note)
   // The path must go: srcAnchor → sExit → [waypoints] → tEntry → tgtAnchor
@@ -133,7 +131,7 @@ function orthogonalRoute(
   const sExit  = { x: srcPt.x + srcDir.dx * STUB, y: srcPt.y + srcDir.dy * STUB };
   const tEntry = { x: tgtPt.x + tgtDir.dx * STUB, y: tgtPt.y + tgtDir.dy * STUB };
 
-  const candidates = buildCandidates(sExit, srcDir, tEntry, tgtDir);
+  const candidates = buildCandidates(sExit, srcDir, tEntry);
 
   let bestPts = candidates[0];
   let bestScore = Infinity;
@@ -189,127 +187,99 @@ const ANCHORS: AnchorSide[] = ["top", "bottom", "left", "right"];
 
 // ── Main component ────────────────────────────────────────────────
 
-export default function ConnectionLayer({ notes, gridUnit: G }: Props) {
-  const connections     = useNotesStore((s) => s.connections);
-  const deleteConnection = useNotesStore((s) => s.deleteConnection);
-  const connectionMode  = useNotesStore((s) => s.connectionMode);
-  const addConnection   = useNotesStore((s) => s.addConnection);
-  const arrowMode       = useNotesStore((s) => s.arrowMode);
-  const arrowSourceId   = useNotesStore((s) => s.arrowSourceId);
+function ConnectionLayer({ items }: { items: Note[] }) {
+  const connections = useNotesStore((s) => s.connections);
+  const connectionMode = useNotesStore((s) => s.connectionMode);
+  const arrowMode = useNotesStore((s) => s.arrowMode);
+  const arrowSourceId = useNotesStore((s) => s.arrowSourceId);
   const arrowSourceAnchor = useNotesStore((s) => s.arrowSourceAnchor);
-  const setArrowSource  = useNotesStore((s) => s.setArrowSource);
-  const panX = useNotesStore((s) => s.canvas.panX);
-  const panY = useNotesStore((s) => s.canvas.panY);
-  const zoom = useNotesStore((s) => s.canvas.zoom || 1);
   const [mousePos, setMousePos] = useState<Pt | null>(null);
-  const [hoveredNoteId, setHoveredNoteId] = useState<string | null>(null);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
 
-  // Re-render when any live drag position changes (module-level map, no store writes)
+  // Re-render while an item is being dragged/resized (module-level map, no store writes).
   const [, forceUpdate] = useReducer((n: number) => n + 1, 0);
   useEffect(() => subscribeLivePositions(forceUpdate), []);
 
+  const tracking = !!connectionMode || arrowMode;
   useEffect(() => {
-    if (!connectionMode && !arrowMode) { setMousePos(null); return; }
-    const onMove = (e: MouseEvent) => {
-      setMousePos({ x: (e.clientX - panX) / zoom, y: (e.clientY - panY) / zoom });
+    if (!tracking) return;
+    const onMove = (e: PointerEvent) => {
+      const { panX, panY, zoom } = useNotesStore.getState().canvas;
+      setMousePos({ x: (e.clientX - panX) / (zoom || 1), y: (e.clientY - panY) / (zoom || 1) });
     };
-    window.addEventListener("mousemove", onMove);
-    return () => window.removeEventListener("mousemove", onMove);
-  }, [connectionMode, arrowMode, panX, panY, zoom]);
+    window.addEventListener("pointermove", onMove);
+    return () => { window.removeEventListener("pointermove", onMove); setMousePos(null); };
+  }, [tracking]);
 
-  useEffect(() => {
-    if (!arrowMode) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setArrowSource(null); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [arrowMode, setArrowSource]);
-
-  // Build obstacle rects from all visible notes (reads from module-level live map)
-  const allRects = notes.map((n) => noteRect(n, G, getLivePosition(n.id)));
-
-  function getRect(n: Note): Rect {
-    return noteRect(n, G, getLivePosition(n.id));
-  }
+  const byId = useMemo(() => new Map(items.map((n) => [n.id, n])), [items]);
+  const rects = new Map(items.map((n) => [n.id, itemRect(n)]));
+  const obstaclesExcept = (a: string, b: string | null) => {
+    const out: Rect[] = [];
+    rects.forEach((r, id) => { if (id !== a && id !== b) out.push(r); });
+    return out;
+  };
 
   function handleAnchorClick(noteId: string, anchor: AnchorSide, e: React.MouseEvent) {
     e.stopPropagation();
-    if (!arrowMode) return;
-    if (!arrowSourceId) { setArrowSource(noteId, anchor); return; }
-    if (arrowSourceId === noteId) { setArrowSource(null); return; }
-    addConnection(arrowSourceId, noteId, "var(--accent)", "arrow", arrowSourceAnchor ?? "bottom", anchor);
-    setArrowSource(null);
+    const s = useNotesStore.getState();
+    if (!s.arrowMode) return;
+    if (!s.arrowSourceId) { s.setArrowSource(noteId, anchor); return; }
+    if (s.arrowSourceId === noteId) { s.setArrowSource(null); return; }
+    s.addConnection(s.arrowSourceId, noteId, "var(--accent)", "arrow", s.arrowSourceAnchor ?? "bottom", anchor);
+    s.setArrowSource(null);
   }
 
-  const sourceNote = connectionMode ? notes.find((n) => n.id === connectionMode) : null;
+  const ropeSource = connectionMode ? rects.get(connectionMode) : undefined;
+  const deleteConnection = (id: string) => useNotesStore.getState().deleteConnection(id);
 
   return (
-    <svg
-      style={{
-        position: "absolute", inset: 0, width: "100%", height: "100%",
-        overflow: "visible", pointerEvents: "none", zIndex: 5,
-      }}
-    >
+    <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", overflow: "visible", pointerEvents: "none", zIndex: 5 }}>
       <defs>
         <marker id="arr-end" markerWidth="9" markerHeight="7" refX="8.5" refY="3.5" orient="auto">
-          <polygon points="0 0, 9 3.5, 0 7" fill="var(--accent)" opacity="0.9" />
+          <polygon points="0 0, 9 3.5, 0 7" style={{ fill: "var(--accent)" }} />
         </marker>
         <marker id="arr-preview" markerWidth="9" markerHeight="7" refX="8.5" refY="3.5" orient="auto">
           <polygon points="0 0, 9 3.5, 0 7" fill="#e74c3c" opacity="0.7" />
         </marker>
       </defs>
 
-      {/* ── Existing connections ── */}
       {connections.map((conn) => {
-        const src = notes.find((n) => n.id === conn.sourceId);
-        const tgt = notes.find((n) => n.id === conn.targetId);
-        if (!src || !tgt) return null;
-        const srcR = getRect(src);
-        const tgtR = getRect(tgt);
+        const srcR = rects.get(conn.sourceId);
+        const tgtR = rects.get(conn.targetId);
+        if (!srcR || !tgtR) return null;
 
         if (conn.connectionType === "arrow") {
           const sa = conn.sourceAnchor ?? "bottom";
           const ta = conn.targetAnchor ?? "top";
-          const sp = noteAnchorPt(srcR, sa);
-          const tp = noteAnchorPt(tgtR, ta);
-
-          // Obstacles: all other notes/photos except src and tgt
-          const softObs = allRects.filter((_, i) => notes[i].id !== conn.sourceId && notes[i].id !== conn.targetId);
-          const hardObs = [srcR, tgtR];
-          const pts = orthogonalRoute(sp, sa, tp, ta, softObs, hardObs);
+          const pts = orthogonalRoute(noteAnchorPt(srcR, sa), sa, noteAnchorPt(tgtR, ta), ta, obstaclesExcept(conn.sourceId, conn.targetId), [srcR, tgtR]);
           const d = pointsToPath(pts, 10);
-
           return (
-            <g key={conn.id} style={{ pointerEvents: "stroke", cursor: "pointer" }}
-              onClick={() => deleteConnection(conn.id)}>
-              {/* Shadow */}
+            <g key={conn.id} className="conn" onClick={() => deleteConnection(conn.id)}>
+              <title>Click to remove arrow</title>
               <path d={d} stroke="rgba(0,0,0,0.16)" strokeWidth="4" fill="none" strokeLinecap="round" strokeLinejoin="round" transform="translate(1,2)" />
-              {/* Main line */}
-              <path d={d} stroke={conn.color} strokeWidth="2.2" fill="none" strokeLinecap="round" strokeLinejoin="round" markerEnd="url(#arr-end)" />
-              {/* Fat invisible hit area */}
-              <path d={d} stroke="transparent" strokeWidth="14" fill="none" style={{ pointerEvents: "stroke" }} />
+              <path className="conn-main" d={d} style={{ stroke: conn.color }} strokeWidth="2.2" fill="none" strokeLinecap="round" strokeLinejoin="round" markerEnd="url(#arr-end)" />
+              <path d={d} stroke="transparent" strokeWidth="14" fill="none" />
             </g>
           );
         }
 
-        // Rope connection
         const sc = noteCenter(srcR);
         const tc = noteCenter(tgtR);
         const d = ropeD(sc.x, sc.y, tc.x, tc.y);
         return (
-          <g key={conn.id} style={{ pointerEvents: "stroke", cursor: "pointer" }}
-            onClick={() => deleteConnection(conn.id)}>
+          <g key={conn.id} className="conn" onClick={() => deleteConnection(conn.id)}>
+            <title>Click to remove rope</title>
             <path d={d} stroke="rgba(0,0,0,0.25)" strokeWidth="5" fill="none" strokeLinecap="round" transform="translate(1,2)" />
             <path d={d} stroke="#8b1a1a" strokeWidth="3.5" fill="none" strokeLinecap="round" />
-            <path d={d} stroke={conn.color} strokeWidth="2" fill="none" strokeLinecap="round" opacity="0.9" />
+            <path className="conn-main" d={d} style={{ stroke: conn.color }} strokeWidth="2" fill="none" strokeLinecap="round" opacity="0.9" />
             <path d={d} stroke="rgba(255,180,180,0.35)" strokeWidth="0.8" fill="none" strokeLinecap="round" strokeDasharray="4 3" />
-            <path d={d} stroke="transparent" strokeWidth="14" fill="none" style={{ pointerEvents: "stroke" }} />
+            <path d={d} stroke="transparent" strokeWidth="14" fill="none" />
           </g>
         );
       })}
 
-      {/* ── Rope preview while connecting ── */}
-      {connectionMode && sourceNote && mousePos && (() => {
-        const sc = noteCenter(getRect(sourceNote));
+      {ropeSource && mousePos && (() => {
+        const sc = noteCenter(ropeSource);
         const d = ropeD(sc.x, sc.y, mousePos.x, mousePos.y);
         return (
           <g style={{ pointerEvents: "none" }}>
@@ -319,66 +289,51 @@ export default function ConnectionLayer({ notes, gridUnit: G }: Props) {
         );
       })()}
 
-      {/* ── Arrow mode: anchor dots on all notes ── */}
-      {arrowMode && notes.map((note) => {
-        const r = getRect(note);
-        const isSource = note.id === arrowSourceId;
-        const isHovered = note.id === hoveredNoteId;
+      {arrowMode && items.map((note) => {
+        const r = rects.get(note.id)!;
         return ANCHORS.map((anchor) => {
           const pt = noteAnchorPt(r, anchor);
-          const isActive = isSource && arrowSourceAnchor === anchor;
+          const active = note.id === arrowSourceId && arrowSourceAnchor === anchor;
+          const hot = note.id === hoveredId;
           return (
             <circle
               key={`${note.id}-${anchor}`}
+              className="anchor-dot"
+              data-active={active}
+              data-hot={hot}
               cx={pt.x} cy={pt.y}
-              r={isActive ? 9 : isHovered ? 7 : 5}
-              fill={isActive ? "var(--accent)" : isHovered ? "rgba(92,107,192,0.75)" : "rgba(92,107,192,0.35)"}
-              stroke={isActive ? "#fff" : "rgba(255,255,255,0.85)"}
-              strokeWidth={isActive ? 2 : 1.5}
-              style={{ pointerEvents: "all", cursor: "crosshair", transition: "r 100ms, fill 100ms" }}
-              onMouseEnter={() => setHoveredNoteId(note.id)}
-              onMouseLeave={() => setHoveredNoteId(null)}
+              r={active ? 9 : hot ? 7 : 5.5}
+              onMouseEnter={() => setHoveredId(note.id)}
+              onMouseLeave={() => setHoveredId(null)}
               onClick={(e) => handleAnchorClick(note.id, anchor, e)}
             />
           );
         });
       })}
 
-      {/* ── Arrow preview while drawing ── */}
-      {arrowMode && arrowSourceId && mousePos && (() => {
-        const src = notes.find((n) => n.id === arrowSourceId);
-        if (!src || !arrowSourceAnchor) return null;
-        const srcR = getRect(src);
+      {arrowMode && arrowSourceId && arrowSourceAnchor && mousePos && (() => {
+        const srcR = rects.get(arrowSourceId);
+        if (!srcR) return null;
         const sp = noteAnchorPt(srcR, arrowSourceAnchor);
-
-        let tp = mousePos;
-        let targetAnchor: AnchorSide | null = null;
-        const hovered = hoveredNoteId ? notes.find((n) => n.id === hoveredNoteId) : null;
-        if (hovered && hoveredNoteId !== arrowSourceId) {
-          const hr = getRect(hovered);
-          const nearest = ANCHORS.map((a) => ({ a, pt: noteAnchorPt(hr, a) }))
-            .sort((x, y) => Math.hypot(mousePos.x - x.pt.x, mousePos.y - x.pt.y) - Math.hypot(mousePos.x - y.pt.x, mousePos.y - y.pt.y))[0];
-          targetAnchor = nearest.a;
-          tp = nearest.pt;
-        }
-
+        const hoverR = hoveredId && hoveredId !== arrowSourceId && byId.has(hoveredId) ? rects.get(hoveredId) : undefined;
         let d: string;
-        if (targetAnchor) {
-          const softObs = allRects.filter((_, i) => notes[i].id !== arrowSourceId && notes[i].id !== hoveredNoteId);
-          const pts = orthogonalRoute(sp, arrowSourceAnchor, tp, targetAnchor, softObs, [srcR]);
-          d = pointsToPath(pts, 10);
+        if (hoverR) {
+          const nearest = ANCHORS
+            .map((a) => ({ a, pt: noteAnchorPt(hoverR, a) }))
+            .sort((p, q) => Math.hypot(mousePos.x - p.pt.x, mousePos.y - p.pt.y) - Math.hypot(mousePos.x - q.pt.x, mousePos.y - q.pt.y))[0];
+          d = pointsToPath(orthogonalRoute(sp, arrowSourceAnchor, nearest.pt, nearest.a, obstaclesExcept(arrowSourceId, hoveredId), [srcR]), 10);
         } else {
-          d = `M ${sp.x} ${sp.y} L ${tp.x} ${tp.y}`;
+          d = `M ${sp.x} ${sp.y} L ${mousePos.x} ${mousePos.y}`;
         }
-
         return (
           <g style={{ pointerEvents: "none" }}>
             <path d={d} stroke="rgba(0,0,0,0.12)" strokeWidth="3" fill="none" strokeLinecap="round" strokeLinejoin="round" transform="translate(1,2)" />
-            <path d={d} stroke="#e74c3c" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"
-              strokeDasharray="6 4" opacity="0.8" markerEnd="url(#arr-preview)" />
+            <path d={d} stroke="#e74c3c" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="6 4" opacity="0.8" markerEnd="url(#arr-preview)" />
           </g>
         );
       })()}
     </svg>
   );
 }
+
+export default memo(ConnectionLayer);

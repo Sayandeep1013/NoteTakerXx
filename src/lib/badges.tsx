@@ -1,4 +1,5 @@
-import React from "react";
+import React, { useMemo } from "react";
+import { useNotesStore, type CustomBadge } from "@/store/notes";
 
 export interface BadgeDef {
   id: string;
@@ -76,3 +77,31 @@ export const DEFAULT_BADGES: BadgeDef[] = [
   { id: "fire",  label: "Hot",      color: "#ff6b35", ring: "#c0390f", Icon: FireBadgeIcon  },
   { id: "check", label: "Done",     color: "#34c759", ring: "#1a8c3c", Icon: CheckBadgeIcon },
 ];
+
+// ── Default + custom badges ──────────────────────────────────────
+
+const customIconCache = new Map<string, React.FC<{ size?: number }>>();
+
+/** Stable icon component per custom badge, so badge <img>s never remount. */
+function customBadgeIcon(badge: CustomBadge): React.FC<{ size?: number }> {
+  const key = `${badge.id}|${badge.url}`;
+  let Icon = customIconCache.get(key);
+  if (!Icon) {
+    Icon = function CustomBadgeIcon({ size = 28 }: { size?: number }) {
+      // eslint-disable-next-line @next/next/no-img-element
+      return <img src={badge.url} alt={badge.label} draggable={false} style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover" }} />;
+    };
+    customIconCache.set(key, Icon);
+  }
+  return Icon;
+}
+
+export function useAllBadges(): BadgeDef[] {
+  const customBadges = useNotesStore((s) => s.customBadges);
+  return useMemo(() => [
+    ...DEFAULT_BADGES,
+    ...customBadges.map((cb) => ({ id: cb.id, label: cb.label, color: "#888", ring: "#666", Icon: customBadgeIcon(cb) })),
+  ], [customBadges]);
+}
+
+export const isCustomBadge = (badge: BadgeDef) => badge.id.startsWith("custom_");

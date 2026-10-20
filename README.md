@@ -65,8 +65,9 @@ NoteTakerXX is a spatial note-taking app built around an infinite canvas. Instea
 - Persisted canvas pan position.
 - Persisted canvas zoom position.
 - Persisted coffee-button preference.
-- Lightweight FPS and memory monitor.
-- Responsive HUD scaling for smaller screens.
+- Dev-only FPS and memory readout (hidden in production builds).
+- Responsive toolbar that wraps into rows on phones; two-finger pinch zoom on touch screens.
+- Images are downscaled and stored as WebP (JPEG fallback) before saving.
 - Handwritten sticky-note typography using the Patrick Hand font.
 
 ## Screenshots

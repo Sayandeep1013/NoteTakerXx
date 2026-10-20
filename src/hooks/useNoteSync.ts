@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useNotesStore } from "@/store/notes";
 import type { Note } from "@/store/notes";
+import { PHOTOS_BUCKET_DISABLED_KEY } from "@/hooks/usePhotoAdd";
 import type { User } from "@supabase/supabase-js";
 
 const CACHE_KEY  = "nxtaker_notes";
@@ -11,8 +12,8 @@ const USER_CACHE_PREFIX = "nxtaker_user_notes_";
 const USER_CACHE_BACKUP_PREFIX = "nxtaker_user_notes_backup_";
 const GUEST_CACHE_BACKUP_KEY = "nxtaker_notes_backup";
 const MISSING_NOTE_COLUMNS_KEY = "nxtaker_missing_note_columns";
-const PHOTOS_BUCKET_DISABLED_KEY = "nxtaker_photos_bucket_disabled";
 const DEBOUNCE   = 800;
+const CACHE_WRITE_DELAY = 500;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CANVAS_DB_COLUMNS = ["type", "parent_id", "folder_name", "image_url", "image_path", "caption", "stroke_points", "stroke_color", "stroke_width"] as const;
 const OPTIONAL_DB_COLUMNS = ["badges", "font_size", ...CANVAS_DB_COLUMNS] as const;
@@ -79,7 +80,17 @@ function writeNotesCache(key: string, notes: Note[]) {
     topZ: safeTopZ(notes),
     savedAt: new Date().toISOString(),
   };
-  localStorage.setItem(key, JSON.stringify(payload));
+  const json = JSON.stringify(payload);
+  try {
+    localStorage.setItem(key, json);
+  } catch {
+    // Out of space (photos are stored inline for guests): drop backups and retry once.
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (k && (k.includes("_backup") || k.endsWith("_empty_guard_backup"))) localStorage.removeItem(k);
+    }
+    localStorage.setItem(key, json);
+  }
 }
 
 function userCacheKey(userId: string) {
@@ -98,16 +109,21 @@ function readUserCache(userId: string): Note[] {
   return readNotesCache(userCacheKey(userId));
 }
 
+/** Writes `notes` to `key`, first keeping the previous copy as a best-effort backup. */
+function writeWithBackup(key: string, backupKey: string, notes: Note[]) {
+  const previous = localStorage.getItem(key);
+  if (previous) {
+    try { localStorage.setItem(backupKey, previous); } catch { localStorage.removeItem(backupKey); }
+  }
+  writeNotesCache(key, notes);
+}
+
 function writeGuestCache(notes: Note[]) {
-  const existing = readGuestCache();
-  if (existing.length > 0) writeNotesCache(GUEST_CACHE_BACKUP_KEY, existing);
-  writeNotesCache(CACHE_KEY, notes);
+  writeWithBackup(CACHE_KEY, GUEST_CACHE_BACKUP_KEY, notes);
 }
 
 function writeUserCache(userId: string, notes: Note[]) {
-  const existing = readUserCache(userId);
-  if (existing.length > 0) writeNotesCache(userBackupCacheKey(userId), existing);
-  writeNotesCache(userCacheKey(userId), notes);
+  writeWithBackup(userCacheKey(userId), userBackupCacheKey(userId), notes);
 }
 
 function readMissingColumns() {
@@ -203,8 +219,7 @@ async function resilientUpsert(
   userId: string,
 ) {
   const fullRow = toRow(note, userId, true);
-  let row = stripMissingColumns(fullRow);
-  let { error } = await supabase.from("notes").upsert(row);
+  let { error } = await supabase.from("notes").upsert(stripMissingColumns(fullRow));
   if (error) {
     const msg = error.message.toLowerCase();
     const schemaCacheMiss = msg.includes("schema cache") || error.code === "PGRST204" || error.code === "42703";
@@ -254,8 +269,9 @@ async function uploadGuestPhotoIfNeeded(
   if (localStorage.getItem(PHOTOS_BUCKET_DISABLED_KEY) === "1") return note;
   const response = await fetch(note.imageUrl);
   const blob = await response.blob();
-  const path = `${userId}/${crypto.randomUUID()}.jpg`;
-  const { error } = await supabase.storage.from("photos").upload(path, blob, { upsert: true, contentType: "image/jpeg" });
+  const ext = blob.type === "image/webp" ? "webp" : "jpg";
+  const path = `${userId}/${crypto.randomUUID()}.${ext}`;
+  const { error } = await supabase.storage.from("photos").upload(path, blob, { upsert: true, contentType: blob.type || "image/jpeg", cacheControl: "31536000" });
   if (error) {
     if (error.message.toLowerCase().includes("bucket not found")) {
       localStorage.setItem(PHOTOS_BUCKET_DISABLED_KEY, "1");
@@ -269,7 +285,7 @@ async function uploadGuestPhotoIfNeeded(
 // ── Main hook ──────────────────────────────────────────────────────
 
 export function useNoteSync(user: User | null, authLoading = false) {
-  const { notes, pendingDeletedItemIds, consumeDeletedItemIds } = useNotesStore();
+  const notes = useNotesStore((s) => s.notes);
   const [showMergePrompt, setShowMergePrompt] = useState(false);
   const [cachedCount, setCachedCount]         = useState(0);
   const [dbError, setDbError]                 = useState<string | null>(null);
@@ -287,6 +303,7 @@ export function useNoteSync(user: User | null, authLoading = false) {
   const loadedFor  = useRef<string | null | undefined>(undefined); // which userId we've loaded
   const guestHydratedFromCache = useRef(false);
   const latestNotes = useRef<Note[]>(notes);
+  const cacheTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     latestNotes.current = notes;
@@ -442,11 +459,20 @@ export function useNoteSync(user: User | null, authLoading = false) {
   // ── Persist whenever notes change ─────────────────────────────────
   useEffect(() => {
     if (authLoading || !syncReady) return;
+    // Local cache writes serialise the whole wall, so batch them.
+    clearTimeout(cacheTimer.current);
+    const uid = user?.id ?? null;
+    cacheTimer.current = setTimeout(() => {
+      try {
+        if (uid) writeUserCache(uid, latestNotes.current);
+        else writeGuestCache(latestNotes.current);
+      } catch { /* quota */ }
+    }, CACHE_WRITE_DELAY);
+
     if (!user) {
-      if (notes.length === 0 && guestHydratedFromCache.current) return;
+      if (notes.length === 0 && guestHydratedFromCache.current) { clearTimeout(cacheTimer.current); return; }
       guestHydratedFromCache.current = false;
-      try { writeGuestCache(notes); } catch { /* quota */ }
-      prevNotes.current = [...notes];
+      prevNotes.current = notes;
       return;
     }
 
@@ -459,11 +485,10 @@ export function useNoteSync(user: User | null, authLoading = false) {
       return;
     }
 
-    try { writeUserCache(user.id, notes); } catch { /* quota */ }
-
     // Detect deletions
     const prevIds = new Set(prevNotes.current.map((n) => n.id));
     const currIds = new Set(notes.map((n) => n.id));
+    const { pendingDeletedItemIds, consumeDeletedItemIds } = useNotesStore.getState();
     const deleted = [...prevIds].filter((id) => !currIds.has(id) && pendingDeletedItemIds.includes(id));
     if (deleted.length > 0) {
       const deletedPhotoPaths = prevNotes.current
@@ -484,6 +509,7 @@ export function useNoteSync(user: User | null, authLoading = false) {
     const prev = new Map(prevNotes.current.map((n) => [n.id, n]));
     notes.forEach((note) => {
       const p = prev.get(note.id);
+      if (p === note) return; // the store keeps references for untouched items
       const unchanged = p &&
         p.title === note.title && p.body === note.body &&
         p.x === note.x && p.y === note.y && p.w === note.w && p.h === note.h &&
@@ -514,7 +540,7 @@ export function useNoteSync(user: User | null, authLoading = false) {
       }, DEBOUNCE));
     });
 
-    prevNotes.current = [...notes];
+    prevNotes.current = notes;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authLoading, notes, syncReady, user?.id]);
 
@@ -547,6 +573,7 @@ export function useNoteSync(user: User | null, authLoading = false) {
   useEffect(() => {
     if (authLoading) return;
     const flush = () => {
+      clearTimeout(cacheTimer.current);
       try {
         if (user) writeUserCache(user.id, latestNotes.current);
         else writeGuestCache(latestNotes.current);

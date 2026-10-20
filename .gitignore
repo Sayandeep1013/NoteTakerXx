@@ -46,3 +46,6 @@ next-env.d.ts
 
 # local project notes/logs
 /docs/
+
+# local credentials / scratch notes (never commit)
+NoteTakerXx.txt
