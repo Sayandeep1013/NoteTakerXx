@@ -2,17 +2,21 @@
 
 import { useRef } from "react";
 import { flushSync } from "react-dom";
+import { spring } from "@/lib/spring";
 
 const OPEN_RADIUS = 18;
 const COMPACT_RADIUS = 16;
 const COMPACT_SIZE = 50;
-// Opening: the bar travels out with an ease-out while its outline grows with a gentle spring.
-const OPEN_MOVE = { duration: 520, easing: "cubic-bezier(0.22, 1, 0.36, 1)" };
-const OPEN_GROW = { duration: 560, easing: "cubic-bezier(0.3, 1.2, 0.5, 1)" };
-// Closing: shrink a little ahead of the travel so it "tucks in" as it flies home.
-const CLOSE_MOVE = { duration: 420, easing: "cubic-bezier(0.55, 0, 0.25, 1)" };
-const CLOSE_SHRINK = { duration: 340, easing: "cubic-bezier(0.5, 0, 0.3, 1)" };
-const ITEM_EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
+
+// Spring tunings (bounce = damping ratio: lower wobbles more).
+const SPRINGS = {
+  travelOut: { stiffness: 240, bounce: 0.6 },  // flies out to its edge, overshoots a touch, settles
+  grow: { stiffness: 300, bounce: 0.45 },       // the bar's size wobbles as it lands
+  items: { stiffness: 360, bounce: 0.5 },      // icons pop in with a little jiggle
+  travelHome: { stiffness: 260, bounce: 0.62 }, // glides home, slight overshoot at the resting spot
+  land: { stiffness: 500, bounce: 0.36 },       // compact button jiggles as it lands
+};
+const CLOSE_SHRINK = { duration: 300, easing: "cubic-bezier(0.5, 0, 0.3, 1)" };
 
 type Box = { left: number; top: number; width: number; height: number };
 
@@ -29,10 +33,11 @@ const toward = (from: Box, to: Box) =>
 
 /**
  * Morphs the toolbar between its full bar and the compact button that rests
- * next to the + button. Closing shrinks the bar's outline (clip-path) to the
- * button's size while it glides to the resting spot; opening is the reverse,
- * with the icons cascading out from the centre. Only clip-path, transform and
- * opacity animate, so it stays on the compositor.
+ * next to the + button, on real spring curves (see lib/spring): closing shrinks
+ * the bar while it springs home and the button lands with a jiggle; opening
+ * springs it out to its edge where it wobbles and settles while the icons pop
+ * in from the centre. Only clip-path, transform, scale, translate and opacity
+ * animate, so it stays on the compositor.
  */
 export function useDockMorph() {
   const navRef = useRef<HTMLElement>(null);
@@ -41,12 +46,13 @@ export function useDockMorph() {
   const busy = useRef(false);
 
   const fullClip = `inset(0px 0px 0px 0px round ${OPEN_RADIUS}px)`;
-  const itemShift = () => (wrapRef.current?.dataset.side === "left" ? "translateX(-10px)" : "translateY(10px)");
+  const itemShift = () => (wrapRef.current?.dataset.side === "left" ? "-12px 0px" : "0px 12px");
   const items = (nav: HTMLElement) => Array.from(nav.children) as HTMLElement[];
   const cancelAll = () => navRef.current?.getAnimations({ subtree: true }).forEach((a) => a.cancel());
   const morphing = (on: boolean) => wrapRef.current?.classList.toggle("dock-morphing", on);
+  const done = (anims: Animation[]) => Promise.all(anims.map((a) => a.finished.catch(() => {})));
 
-  /** Fold the bar down to a compact-sized box, flying to `target` (or staying centred). */
+  /** Fold the bar down to a compact-sized box, springing to `target` (or staying centred). */
   const fold = async (target: Box | null) => {
     const nav = navRef.current;
     if (!nav || prefersReducedMotion()) return;
@@ -55,31 +61,37 @@ export function useDockMorph() {
     const mid = (list.length - 1) / 2;
     morphing(true);
     list.forEach((el, i) => el.animate(
-      [{ opacity: 1, transform: "none" }, { opacity: 0, transform: `${itemShift()} scale(0.85)` }],
-      { duration: 170, delay: (mid - Math.abs(i - mid)) * 8, easing: "ease-in", fill: "forwards" },
+      [{ opacity: 1, scale: "1" }, { opacity: 0, scale: "0.6" }],
+      { duration: 150, delay: (mid - Math.abs(i - mid)) * 7, easing: "ease-in", fill: "forwards" },
     ));
     const w = target?.width ?? COMPACT_SIZE, h = target?.height ?? COMPACT_SIZE;
-    const runs = [nav.animate([{ clipPath: fullClip }, { clipPath: centredClip(full, w, h, COMPACT_RADIUS) }], { ...CLOSE_SHRINK, fill: "forwards" })];
-    if (target) runs.push(nav.animate([{ transform: "none" }, { transform: toward(full, target) }], { ...CLOSE_MOVE, fill: "forwards" }));
-    await Promise.all(runs.map((a) => a.finished.catch(() => {})));
+    const anims = [nav.animate([{ clipPath: fullClip }, { clipPath: centredClip(full, w, h, COMPACT_RADIUS) }], { ...CLOSE_SHRINK, fill: "forwards" })];
+    if (target) anims.push(nav.animate([{ transform: "none" }, { transform: toward(full, target) }], { ...spring(SPRINGS.travelHome), fill: "forwards" }));
+    await done(anims);
   };
 
-  /** Grow the (already rendered) full bar out of `source` (or out of its own centre). */
+  /** Spring the (already rendered) full bar out of `source` (or out of its own centre). */
   const unfold = async (source: Box | null) => {
     const nav = navRef.current;
     if (!nav || prefersReducedMotion()) { morphing(false); return; }
     const full = nav.getBoundingClientRect();
     const list = items(nav);
     const mid = (list.length - 1) / 2;
+    const pop = spring(SPRINGS.items);
     morphing(true);
     list.forEach((el, i) => el.animate(
-      [{ opacity: 0, transform: `${itemShift()} scale(0.85)` }, { opacity: 1, transform: "none" }],
-      { duration: 300, delay: 140 + Math.abs(i - mid) * 16, easing: ITEM_EASE, fill: "backwards" },
+      [{ opacity: 0, scale: "0.4", translate: itemShift() }, { opacity: 1, scale: "1", translate: "0px 0px" }],
+      { ...pop, delay: 110 + Math.abs(i - mid) * 18, fill: "backwards" },
     ));
     const w = source?.width ?? COMPACT_SIZE, h = source?.height ?? COMPACT_SIZE;
-    const runs = [nav.animate([{ clipPath: centredClip(full, w, h, COMPACT_RADIUS) }, { clipPath: fullClip }], OPEN_GROW)];
-    if (source) runs.push(nav.animate([{ transform: toward(full, source) }, { transform: "none" }], OPEN_MOVE));
-    await Promise.all(runs.map((a) => a.finished.catch(() => {})));
+    const grow = spring(SPRINGS.grow);
+    const anims = [
+      nav.animate([{ clipPath: centredClip(full, w, h, COMPACT_RADIUS) }, { clipPath: fullClip }], grow),
+      // Scale overshoots past 1 and back: the visible "bounce" of the bar as it lands.
+      nav.animate([{ scale: "0.82" }, { scale: "1" }], grow),
+    ];
+    if (source) anims.push(nav.animate([{ transform: toward(full, source) }, { transform: "none" }], spring(SPRINGS.travelOut)));
+    await done(anims);
     morphing(false);
   };
 
@@ -94,23 +106,21 @@ export function useDockMorph() {
     wrapRef,
     /** Invisible marker for where the compact button rests (rendered while the bar is open). */
     restRef,
-    /** Fly into the resting spot, then commit the compact state. */
+    /** Spring into the resting spot, commit the compact state, land with a jiggle. */
     collapse: (commit: () => void) => run(async () => {
       await fold(restRef.current?.getBoundingClientRect() ?? null);
       flushSync(commit);
       morphing(false);
       cancelAll();
-      if (!prefersReducedMotion()) {
-        navRef.current?.animate([{ transform: "scale(0.88)" }, { transform: "scale(1)" }], { duration: 280, easing: "cubic-bezier(0.3, 1.4, 0.5, 1)" });
-      }
+      if (!prefersReducedMotion()) navRef.current?.animate([{ scale: "0.72" }, { scale: "1" }], spring(SPRINGS.land));
     }),
-    /** Commit the open state, then grow out of the compact button. */
+    /** Commit the open state, then spring out of the compact button. */
     expand: (commit: () => void) => run(async () => {
       const from = navRef.current?.getBoundingClientRect() ?? null;
       flushSync(commit);
       await unfold(from);
     }),
-    /** Fold up in place, switch edges, unfold there. */
+    /** Fold up in place, switch edges, spring open there. */
     move: (commit: () => void) => run(async () => {
       await fold(null);
       flushSync(commit);

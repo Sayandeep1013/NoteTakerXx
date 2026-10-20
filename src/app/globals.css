@@ -530,6 +530,9 @@ input.folder-label { text-align: center; cursor: text; }
 /* While morphing, the shadow follows the animated clip (a box-shadow would be clipped away). */
 .dock-wrap.dock-morphing { filter: drop-shadow(0 4px 10px rgba(0,0,0,0.10)) drop-shadow(0 12px 28px rgba(0,0,0,0.12)); }
 .dock-wrap.dock-morphing .dock { box-shadow: none; overflow: visible; }
+/* Spring "bounce" scales from the edge the bar is anchored to. */
+.dock-wrap[data-side="bottom"] .dock { transform-origin: 50% 100%; }
+.dock-wrap[data-side="left"] .dock { transform-origin: 0% 50%; }
 .dock-wrap[data-side="bottom"] .dock { overflow-x: auto; scrollbar-width: none; }
 .dock-wrap[data-side="left"] .dock { flex-direction: column; overflow-y: auto; scrollbar-width: none; }
 .dock::-webkit-scrollbar { display: none; }
