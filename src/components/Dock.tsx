@@ -51,7 +51,7 @@ export default function Dock() {
   const { username, avatarUrl } = useProfile();
   const { handlePhotoUpload } = usePhotoAdd();
   const togglePanel = (p: Panel) => setPanel((cur) => (cur === p ? null : p));
-  const { navRef, wrapRef, collapse, expand, move } = useDockMorph(side);
+  const { navRef, wrapRef, restRef, collapse, expand, move } = useDockMorph();
 
   // Close the open panel on any press outside the toolbar.
   useEffect(() => {
@@ -65,7 +65,7 @@ export default function Dock() {
 
   if (!s.open) {
     return (
-      <div ref={wrapRef} className="dock-wrap" data-side={side}>
+      <div ref={wrapRef} className="dock-wrap" data-side="rest">
         <nav ref={navRef} className="dock dock--compact surface" aria-label="Toolbar">
           <DockButton label="Show toolbar" onClick={() => void expand(() => store.setSidebarOpen(true))}><CollapseIcon size={20} /></DockButton>
         </nav>
@@ -74,6 +74,9 @@ export default function Dock() {
   }
 
   return (
+    <>
+    {/* Where the compact button rests; the close animation flies here. (Outside the wrap: its transform would offset a fixed child.) */}
+    <span ref={restRef} className="dock-rest" aria-hidden="true" />
     <div ref={wrapRef} className="dock-wrap" data-side={side}>
       <nav ref={navRef} className="dock surface" aria-label="Toolbar">
         <DockButton label="Hide toolbar" onClick={() => { setPanel(null); void collapse(() => store.setSidebarOpen(false)); }}><CollapseIcon /></DockButton>
@@ -143,6 +146,7 @@ export default function Dock() {
       {showProfile && user && <ProfileModal user={user} onClose={() => setShowProfile(false)} />}
       {badgeToDelete && <DeleteBadgeDialog badge={badgeToDelete} onClose={() => setBadgeToDelete(null)} />}
     </div>
+    </>
   );
 }
 

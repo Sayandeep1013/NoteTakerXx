@@ -519,8 +519,14 @@ input.folder-label { text-align: center; cursor: text; }
   border-radius: 18px;
   max-width: inherit; max-height: inherit;
 }
-/* Compact state: the same bordered surface, shrunk to a single button. */
+/* Compact state: the same bordered surface as a single button, resting left of the + button. */
 .dock--compact { padding: 4px; border-radius: 16px; }
+.dock-wrap[data-side="rest"],
+.dock-rest {
+  right: calc(var(--gutter) + var(--fab-size) + 12px);
+  bottom: calc(var(--hud-bottom) + (var(--fab-size) - 50px) / 2);
+}
+.dock-rest { position: fixed; width: 50px; height: 50px; pointer-events: none; visibility: hidden; }
 /* While morphing, the shadow follows the animated clip (a box-shadow would be clipped away). */
 .dock-wrap.dock-morphing { filter: drop-shadow(0 4px 10px rgba(0,0,0,0.10)) drop-shadow(0 12px 28px rgba(0,0,0,0.12)); }
 .dock-wrap.dock-morphing .dock { box-shadow: none; overflow: visible; }
@@ -701,13 +707,6 @@ input.folder-label { text-align: center; cursor: text; }
 /* Pen strokes are clickable, except while drawing/erasing (the canvas hit-tests them). */
 .stroke-g { pointer-events: stroke; cursor: pointer; }
 .canvas-surface[data-tool] .stroke-g { pointer-events: none; }
-
-/* Phones: the toolbar wraps into rows so every tool stays visible (no hidden scroll). */
-@media (max-width: 720px) {
-  .dock-wrap[data-side="bottom"] .dock { flex-wrap: wrap; justify-content: center; overflow: visible; gap: 0; padding: 4px; }
-  .dock-wrap[data-side="bottom"] .dock .icon-btn { width: 36px; height: 36px; }
-  .dock-wrap[data-side="bottom"] .dock .divider { display: none; }
-}
 
 /* Phones: the toolbar wraps into rows so every tool stays visible (no hidden scroll). */
 @media (max-width: 720px) {
