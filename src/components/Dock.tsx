@@ -9,6 +9,7 @@ import { addCustomBadge, chooseDockSide, chooseTheme, deleteCustomBadge } from "
 import { useAuth } from "@/hooks/useAuth";
 import { useProfile } from "@/hooks/useProfile";
 import { usePhotoAdd } from "@/hooks/usePhotoAdd";
+import { useDockMorph } from "@/hooks/useDockMorph";
 import ProfileModal from "./ProfileModal";
 import { ConfirmDialog } from "./ui/Modal";
 import {
@@ -50,7 +51,7 @@ export default function Dock() {
   const { username, avatarUrl } = useProfile();
   const { handlePhotoUpload } = usePhotoAdd();
   const togglePanel = (p: Panel) => setPanel((cur) => (cur === p ? null : p));
-  const wrapRef = useRef<HTMLDivElement>(null);
+  const { navRef, wrapRef, collapse, expand, move } = useDockMorph(side);
 
   // Close the open panel on any press outside the toolbar.
   useEffect(() => {
@@ -60,22 +61,24 @@ export default function Dock() {
     };
     document.addEventListener("pointerdown", onDown, true);
     return () => document.removeEventListener("pointerdown", onDown, true);
-  }, [panel]);
+  }, [panel, wrapRef]);
 
   if (!s.open) {
     return (
-      <button className="hud dock-collapsed surface icon-btn" style={{ position: "fixed", zIndex: 510 }} onClick={() => store.setSidebarOpen(true)} title="Show toolbar" aria-label="Show toolbar">
-        <CollapseIcon size={20} />
-      </button>
+      <div ref={wrapRef} className="dock-wrap" data-side={side}>
+        <nav ref={navRef} className="dock dock--compact surface" aria-label="Toolbar">
+          <DockButton label="Show toolbar" onClick={() => void expand(() => store.setSidebarOpen(true))}><CollapseIcon size={20} /></DockButton>
+        </nav>
+      </div>
     );
   }
 
   return (
     <div ref={wrapRef} className="dock-wrap" data-side={side}>
-      <nav className="dock surface" aria-label="Toolbar">
-        <DockButton label="Hide toolbar" onClick={() => { setPanel(null); store.setSidebarOpen(false); }}><CollapseIcon /></DockButton>
+      <nav ref={navRef} className="dock surface" aria-label="Toolbar">
+        <DockButton label="Hide toolbar" onClick={() => { setPanel(null); void collapse(() => store.setSidebarOpen(false)); }}><CollapseIcon /></DockButton>
         {!narrow && (
-          <DockButton label={side === "left" ? "Move toolbar to the bottom" : "Move toolbar to the left"} onClick={() => chooseDockSide(side === "left" ? "bottom" : "left")}>
+          <DockButton label={side === "left" ? "Move toolbar to the bottom" : "Move toolbar to the left"} onClick={() => { setPanel(null); void move(() => chooseDockSide(side === "left" ? "bottom" : "left")); }}>
             {side === "left" ? <DockBottomIcon /> : <DockLeftIcon />}
           </DockButton>
         )}

@@ -517,18 +517,17 @@ input.folder-label { text-align: center; cursor: text; }
   display: flex; align-items: center; gap: 2px;
   padding: 6px;
   border-radius: 18px;
-  animation: pop-in 220ms var(--ease-spring);
   max-width: inherit; max-height: inherit;
 }
+/* Compact state: the same bordered surface, shrunk to a single button. */
+.dock--compact { padding: 4px; border-radius: 16px; }
+/* While morphing, the shadow follows the animated clip (a box-shadow would be clipped away). */
+.dock-wrap.dock-morphing { filter: drop-shadow(0 4px 10px rgba(0,0,0,0.10)) drop-shadow(0 12px 28px rgba(0,0,0,0.12)); }
+.dock-wrap.dock-morphing .dock { box-shadow: none; overflow: visible; }
 .dock-wrap[data-side="bottom"] .dock { overflow-x: auto; scrollbar-width: none; }
 .dock-wrap[data-side="left"] .dock { flex-direction: column; overflow-y: auto; scrollbar-width: none; }
 .dock::-webkit-scrollbar { display: none; }
 .dock-wrap[data-side="left"] .divider--v { width: 26px; height: 1px; margin: 4px 0; }
-.dock-collapsed {
-  right: calc(var(--gutter) + var(--fab-size) + 12px); bottom: var(--hud-bottom);
-  width: 48px; height: 48px; margin-bottom: calc((var(--fab-size) - 48px) / 2);
-  border-radius: 16px;
-}
 .dock-panel {
   position: absolute; z-index: 530;
   width: 248px; max-height: min(400px, calc(100dvh - 140px));
